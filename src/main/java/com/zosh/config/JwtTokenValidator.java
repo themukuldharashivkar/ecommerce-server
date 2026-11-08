@@ -32,7 +32,7 @@ public class JwtTokenValidator extends OncePerRequestFilter {
 		
 		String jwt = request.getHeader(JwtConstant.JWT_HEADER);
 		System.out.println("jwt ------ "+jwt);
-		if(jwt!=null) {
+		if(jwt!=null && jwt.startsWith("Bearer ") && !"Bearer null".equals(jwt)) {
 			jwt=jwt.substring(7);
 			System.out.println("jwt ------ "+jwt);
 			try {
@@ -52,7 +52,9 @@ public class JwtTokenValidator extends OncePerRequestFilter {
 				
 			} catch (Exception e) {
 				// TODO: handle exception
-				throw new BadCredentialsException("invalid token...");
+				// invalid/expired token: leave the request unauthenticated so protected
+				// endpoints answer 401 and public endpoints keep working
+				SecurityContextHolder.clearContext();
 			}
 		}
 		filterChain.doFilter(request, response);

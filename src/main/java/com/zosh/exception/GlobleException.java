@@ -7,6 +7,7 @@ import java.util.Map;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -68,11 +69,17 @@ public class GlobleException {
         return new ResponseEntity<>(body, HttpStatus.NOT_FOUND);
     }
 	
+	@ExceptionHandler(BadCredentialsException.class)
+	public ResponseEntity<ErrorDetails> badCredentialsHandler(BadCredentialsException e, WebRequest req){
+		ErrorDetails error=new ErrorDetails(e.getMessage(),req.getDescription(false),LocalDateTime.now());
+		return new ResponseEntity<ErrorDetails>(error,HttpStatus.UNAUTHORIZED);
+	}
+
 	@ExceptionHandler(Exception.class)
 	public ResponseEntity<ErrorDetails> otherExceptionHandler(Exception e, WebRequest req){
 		ErrorDetails error=new ErrorDetails(e.getMessage(),req.getDescription(false),LocalDateTime.now());
 		
-		return new ResponseEntity<ErrorDetails>(error,HttpStatus.ACCEPTED);
+		return new ResponseEntity<ErrorDetails>(error,HttpStatus.INTERNAL_SERVER_ERROR);
 	}
 
 }

@@ -177,6 +177,13 @@ public class ProductServiceImplementation implements ProductService {
 		
 		} 
 
+		if (sizes != null && !sizes.isEmpty()) {
+			products = products.stream()
+					.filter(p -> p.getSizes().stream().anyMatch(sz -> sz.getQuantity() > 0
+							&& sizes.stream().anyMatch(s -> s.equalsIgnoreCase(sz.getName()))))
+					.collect(Collectors.toList());
+		}
+
 		if(stock!=null) {
 
 			if(stock.equals("in_stock")) {

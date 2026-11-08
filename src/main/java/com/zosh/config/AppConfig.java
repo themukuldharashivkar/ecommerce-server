@@ -4,6 +4,7 @@ import java.util.Arrays;
 import java.util.Collections;
 
 import org.springframework.context.annotation.Bean;
+import org.springframework.http.HttpMethod;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -24,7 +25,8 @@ public class AppConfig {
 
 		http.sessionManagement().sessionCreationPolicy(SessionCreationPolicy.STATELESS).and()
 				.authorizeHttpRequests(
-						Authorize -> Authorize.requestMatchers("/api/**").authenticated().anyRequest().permitAll())
+						Authorize -> Authorize.requestMatchers(HttpMethod.GET, "/api/products/**", "/api/products").permitAll()
+						.requestMatchers("/api/**").authenticated().anyRequest().permitAll())
 				.addFilterBefore(new JwtTokenValidator(), BasicAuthenticationFilter.class).csrf().disable().cors()
 				.configurationSource(new CorsConfigurationSource() {
 
