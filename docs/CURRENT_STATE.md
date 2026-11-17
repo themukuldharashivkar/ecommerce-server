@@ -42,7 +42,9 @@ Enums (`UserRole`, `OrderStatus`, `PaymentMethod`, `PaymentStatus`) use `@Enumer
 
 ### Endpoints (31)
 
-Auth is a JWT in the `Authorization: Bearer <token>` header. "Public" means it works without a token.
+Auth is a JWT in the `Authorization: Bearer <token>` header; the token carries the user's role. "Public" means it works without a token. No token or an invalid one on a protected endpoint gives 401; a valid token without the admin role on `/api/admin/**` gives 403.
+
+Signup always creates `ROLE_USER`. The only admin is the account named by `ADMIN_EMAIL`/`ADMIN_PASSWORD`, created (or promoted, keeping its password) on startup by `AdminBootstrap`.
 
 | Controller | Method and path | Access |
 |---|---|---|
@@ -58,8 +60,8 @@ Auth is a JWT in the `Authorization: Bearer <token>` header. "Public" means it w
 | Payments | `POST /api/payments/{orderId}` (creates a Razorpay Payment Link), `GET /api/payments?payment_id=&order_id=` (confirms payment server-side) | logged in |
 | Reviews | `POST /api/reviews/create`, `GET /api/reviews/product/{productId}` | logged in |
 | Ratings | `POST /api/ratings/create`, `GET /api/ratings/product/{productId}` | logged in |
-| Admin products | `POST /api/admin/products/`, `POST /api/admin/products/creates`, `GET /api/admin/products/all`, `PUT /api/admin/products/{id}/update`, `DELETE /api/admin/products/{id}/delete` | logged in (see known issues) |
-| Admin orders | `GET /api/admin/orders/`, `PUT /api/admin/orders/{id}/confirmed`, `.../ship`, `.../deliver`, `.../cancel`, `DELETE .../{id}/delete` | logged in (see known issues) |
+| Admin products | `POST /api/admin/products/`, `POST /api/admin/products/creates`, `GET /api/admin/products/all`, `PUT /api/admin/products/{id}/update`, `DELETE /api/admin/products/{id}/delete` | `ROLE_ADMIN` |
+| Admin orders | `GET /api/admin/orders/`, `PUT /api/admin/orders/{id}/confirmed`, `.../ship`, `.../deliver`, `.../cancel`, `DELETE .../{id}/delete` | `ROLE_ADMIN` |
 
 ### Seed data
 
@@ -77,7 +79,7 @@ All environment-specific values come from environment variables. `.env.example` 
 
 All profiles run Flyway on startup and validate the schema.
 
-Variables: `PORT`, `DB_URL` or `DB_HOST`/`DB_PORT`/`DB_NAME` (PostgreSQL, default `localhost:5432/ecommerce`), `DB_USERNAME`, `DB_PASSWORD`, `SEED_ENABLED`, `JWT_SECRET`, `JWT_EXPIRATION_MS`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `CORS_ALLOWED_ORIGINS` (comma-separated), `FRONTEND_URL` (Razorpay return URL).
+Variables: `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `PORT`, `DB_URL` or `DB_HOST`/`DB_PORT`/`DB_NAME` (PostgreSQL, default `localhost:5432/ecommerce`), `DB_USERNAME`, `DB_PASSWORD`, `SEED_ENABLED`, `JWT_SECRET`, `JWT_EXPIRATION_MS`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `CORS_ALLOWED_ORIGINS` (comma-separated), `FRONTEND_URL` (Razorpay return URL).
 
 The frontend reads `REACT_APP_API_URL`, falling back to `http://localhost:5454` in development and the Railway URL in production builds (`src/config/api.js`).
 
@@ -110,7 +112,19 @@ npm start                   # http://localhost:3000
 
 ## Tests
 
-1 test (`ECommerceApplicationTests.contextLoads`, Spring context starts on the `test` profile). It needs a running PostgreSQL with an `ecommerce_test` database. No coverage measurement yet.
+Run with `./mvnw verify` (needs Docker; integration tests use a Testcontainers PostgreSQL 16 and the real Flyway migrations). Razorpay is mocked at the `PaymentGateway` interface and never called.
+
+Measured on 2026-11-17 (`./mvnw clean verify`, 12 s on an Apple M5):
+
+| | Count |
+|---|---|
+| Unit tests (JUnit 5 + Mockito) | 49 |
+| Integration tests (Spring Boot + Testcontainers) | 39 |
+| **Total** | **88, all passing** |
+
+JaCoCo line coverage: service layer (`service` + `payment` packages) **87.1%** (303/348 lines); `service` alone 95.1%. `payment` is 51.6% because `RazorpayPaymentGateway`, the thin wrapper around the Razorpay SDK, is deliberately not exercised. Whole codebase 76.6% of lines, 48.2% of branches.
+
+To check that the tests catch real regressions, two bugs were planted temporarily: removing the admin role rule failed 2 tests, and marking uncaptured payments as paid failed 2 tests.
 
 ## Baseline check (2026-11-17)
 
@@ -139,13 +153,22 @@ Working: signup, signin (401 on a wrong password), profile, catalog with filters
 
 A 32-check smoke test of the API (catalog, search, auth, cart, order, Razorpay link, reviews, ratings, admin product and order actions) passes against PostgreSQL.
 
+### Fixed in Step 2 (tests)
+
+- **Role enforcement.** `/api/admin/**` now requires `ROLE_ADMIN`; signup sets `ROLE_USER`; the JWT carries the role. Admins come only from `ADMIN_EMAIL`/`ADMIN_PASSWORD`. The frontend admin panel therefore only works when signed in as that account.
+- Signin with an unknown email now returns the same 401 as a wrong password, so it does not reveal which emails are registered.
+- Razorpay calls moved behind a `PaymentGateway` interface (`RazorpayPaymentGateway`), with the logic in `PaymentService`, so tests can mock the provider. Requests sent to Razorpay are unchanged.
+
 ### Known issues, not yet fixed
 
 | Issue | Planned in |
 |---|---|
-| **No role enforcement.** Any logged-in user can call `/api/admin/**` (verified: a normal user gets 200). `UserRole` exists, but signup never sets a role and the JWT carries no authorities. | Step 5 (and Step 2 tests) |
 | Old secrets (Razorpay test key and secret, DB password, JWT secret) are still in git history and on GitHub. They should be rotated. | Step 10 |
+| **The payment link charges `totalPrice` (MRP), not `totalDiscountedPrice`.** A ₹1000 item discounted to ₹700 asks for ₹1000. Left unchanged pending a decision. | open |
 | Payment confirmation does not check that the Razorpay payment belongs to the given order, or that the order belongs to the caller. | Step 4 |
+| `GET /api/orders/{id}` and `POST /api/payments/{orderId}` do not check that the order belongs to the caller (any logged-in user can read any order, including its address). | Step 5 |
+| Adding an item with quantity > 1 stores quantity 1 (`CartItemServiceImplementation.createCartItem` overrides it). | Step 5 |
+| Client errors without a dedicated handler (missing query parameter, malformed JSON, wrong type) return 500 instead of 400. | Step 5 |
 | The catalog endpoint requires every filter parameter (400 if one is missing). It also loads every product in the category, then filters colour/size/stock and pages in Java. | Step 5 |
 | Search is not paged and returns every match. | Step 5 |
 | The live Railway deployment still runs the MySQL build; moving it to PostgreSQL means a new database (existing live users and orders are not migrated). | Step 8 |

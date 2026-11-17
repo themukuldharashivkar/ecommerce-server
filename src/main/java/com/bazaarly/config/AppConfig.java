@@ -38,6 +38,7 @@ public class AppConfig {
 		http.sessionManagement().sessionCreationPolicy(SessionCreationPolicy.STATELESS).and()
 				.authorizeHttpRequests(
 						Authorize -> Authorize.requestMatchers(HttpMethod.GET, "/api/products/**", "/api/products").permitAll()
+						.requestMatchers("/api/admin/**").hasRole("ADMIN")
 						.requestMatchers("/api/**").authenticated().anyRequest().permitAll())
 				.addFilterBefore(new JwtTokenValidator(jwtTokenProvider), BasicAuthenticationFilter.class).csrf().disable().cors()
 				.configurationSource(new CorsConfigurationSource() {

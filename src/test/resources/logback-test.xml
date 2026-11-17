@@ -1,0 +1,7 @@
+<configuration>
+	<!-- Spring Boot's default console logging, with Docker/Testcontainers chatter turned down -->
+	<include resource="org/springframework/boot/logging/logback/base.xml"/>
+	<logger name="org.testcontainers" level="WARN"/>
+	<logger name="com.github.dockerjava" level="WARN"/>
+	<logger name="tc" level="WARN"/>
+</configuration>

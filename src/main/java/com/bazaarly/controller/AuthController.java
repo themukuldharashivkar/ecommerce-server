@@ -4,6 +4,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -17,6 +19,7 @@ import com.bazaarly.config.JwtTokenProvider;
 import com.bazaarly.exception.UserException;
 import com.bazaarly.modal.Cart;
 import com.bazaarly.modal.User;
+import com.bazaarly.user.domain.UserRole;
 import com.bazaarly.repository.UserRepository;
 import com.bazaarly.request.LoginRequest;
 import com.bazaarly.response.AuthResponse;
@@ -65,6 +68,8 @@ public class AuthController {
 			createdUser.setEmail(email);
 			createdUser.setFirstName(firstName);
 			createdUser.setLastName(lastName);
+			createdUser.setRole(UserRole.ROLE_USER); // admins are never created through signup
+			createdUser.setCreatedAt(java.time.LocalDateTime.now());
 	        createdUser.setPassword(passwordEncoder.encode(password));
 	        
 	        
@@ -73,7 +78,8 @@ public class AuthController {
 	        
 	        cartService.createCart(savedUser);
 
-	        Authentication authentication = new UsernamePasswordAuthenticationToken(email, password);
+	        Authentication authentication = new UsernamePasswordAuthenticationToken(email, null,
+				java.util.List.of(new SimpleGrantedAuthority(UserRole.ROLE_USER.name())));
 	        SecurityContextHolder.getContext().setAuthentication(authentication);
 	        
 	        String token = jwtTokenProvider.generateToken(authentication);
@@ -103,7 +109,13 @@ public class AuthController {
     }
 	
 	private Authentication authenticate(String username, String password) {
-        UserDetails userDetails = customUserDetails.loadUserByUsername(username);
+		UserDetails userDetails;
+		try {
+			userDetails = customUserDetails.loadUserByUsername(username);
+		} catch (UsernameNotFoundException e) {
+			// same response as a wrong password, so signin does not reveal which emails exist
+			throw new BadCredentialsException("Invalid username or password");
+		}
         
         if (userDetails == null) {
             throw new BadCredentialsException("Invalid username or password");

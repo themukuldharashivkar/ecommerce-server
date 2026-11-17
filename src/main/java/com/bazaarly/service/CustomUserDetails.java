@@ -5,6 +5,7 @@ import java.util.List;
 
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Service;
 
 import com.bazaarly.modal.User;
 import com.bazaarly.repository.UserRepository;
+import com.bazaarly.user.domain.UserRole;
 
 @Service
 public class CustomUserDetails implements UserDetailsService {
@@ -33,6 +35,9 @@ public class CustomUserDetails implements UserDetailsService {
 		}
 		
 		List<GrantedAuthority> authorities = new ArrayList<>();
+		// accounts created before roles were assigned have no role: treat them as normal users
+		UserRole role = user.getRole() == null ? UserRole.ROLE_USER : user.getRole();
+		authorities.add(new SimpleGrantedAuthority(role.name()));
 		
 		return new org.springframework.security.core.userdetails.User(user.getEmail(),user.getPassword(),authorities);
 	}
