@@ -2,6 +2,9 @@ package com.bazaarly.config;
 
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
+
+import org.springframework.beans.factory.annotation.Value;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.HttpMethod;
@@ -20,6 +23,15 @@ import jakarta.servlet.http.HttpServletRequest;
 @Configuration
 public class AppConfig {
 
+	private final JwtTokenProvider jwtTokenProvider;
+	private final List<String> allowedOrigins;
+
+	public AppConfig(JwtTokenProvider jwtTokenProvider,
+			@Value("${app.cors.allowed-origins}") List<String> allowedOrigins) {
+		this.jwtTokenProvider = jwtTokenProvider;
+		this.allowedOrigins = allowedOrigins;
+	}
+
 	@Bean
 	public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
 
@@ -27,7 +39,7 @@ public class AppConfig {
 				.authorizeHttpRequests(
 						Authorize -> Authorize.requestMatchers(HttpMethod.GET, "/api/products/**", "/api/products").permitAll()
 						.requestMatchers("/api/**").authenticated().anyRequest().permitAll())
-				.addFilterBefore(new JwtTokenValidator(), BasicAuthenticationFilter.class).csrf().disable().cors()
+				.addFilterBefore(new JwtTokenValidator(jwtTokenProvider), BasicAuthenticationFilter.class).csrf().disable().cors()
 				.configurationSource(new CorsConfigurationSource() {
 
 					@Override
@@ -35,12 +47,7 @@ public class AppConfig {
 
 						CorsConfiguration cfg = new CorsConfiguration();
 
-						cfg.setAllowedOrigins(Arrays.asList(
-
-								"http://localhost:3000", "http://localhost:3001", "http://localhost:4000",
-								"http://localhost:4200", "https://urbanwear-nu.vercel.app"
-
-				));
+						cfg.setAllowedOrigins(allowedOrigins);
 						// cfg.setAllowedMethods(Arrays.asList("GET", "POST","DELETE","PUT"));
 						cfg.setAllowedMethods(Collections.singletonList("*"));
 						cfg.setAllowCredentials(true);

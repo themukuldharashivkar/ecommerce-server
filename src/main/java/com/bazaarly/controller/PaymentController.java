@@ -3,6 +3,7 @@ package com.bazaarly.controller;
 import org.json.JSONObject;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -38,8 +39,17 @@ public class PaymentController {
 	private OrderService orderService;
 	private UserService userService;
 	private OrderRepository orderRepository;
+	private final String razorpayKeyId;
+	private final String razorpayKeySecret;
+	private final String frontendUrl;
 
-	public PaymentController(OrderService orderService, UserService userService, OrderRepository orderRepository) {
+	public PaymentController(OrderService orderService, UserService userService, OrderRepository orderRepository,
+			@Value("${razorpay.key-id}") String razorpayKeyId,
+			@Value("${razorpay.key-secret}") String razorpayKeySecret,
+			@Value("${app.frontend-url}") String frontendUrl) {
+		this.razorpayKeyId = razorpayKeyId;
+		this.razorpayKeySecret = razorpayKeySecret;
+		this.frontendUrl = frontendUrl;
 		this.orderService = orderService;
 		this.userService = userService;
 		this.orderRepository = orderRepository;
@@ -52,7 +62,7 @@ public class PaymentController {
 		Order order = orderService.findOrderById(orderId);
 		try {
 			// Instantiate a Razorpay client with your key ID and secret
-			RazorpayClient razorpay = new RazorpayClient("rzp_test_qMdlo7RO3jCZ1H", "MI8nTSFLd7nIVBDDt1T5OjQp");
+			RazorpayClient razorpay = new RazorpayClient(razorpayKeyId, razorpayKeySecret);
 
 			// Create a JSON object with the payment link request parameters
 			JSONObject paymentLinkRequest = new JSONObject();
@@ -78,7 +88,7 @@ public class PaymentController {
 			paymentLinkRequest.put("reminder_enable", true);
 
 			// Set the callback URL and method
-			paymentLinkRequest.put("callback_url", "http://localhost:3000/payment/" + orderId);
+			paymentLinkRequest.put("callback_url", frontendUrl + "/payment/" + orderId);
 			paymentLinkRequest.put("callback_method", "get");
 
 			// Create the payment link using the paymentLink.create() method
@@ -113,7 +123,7 @@ public class PaymentController {
 	@GetMapping("/payments")
 	public ResponseEntity<ApiResponse> redirect(@RequestParam(name = "payment_id") String paymentId,
 			@RequestParam("order_id") Long orderId) throws RazorpayException, OrderException {
-		RazorpayClient razorpay = new RazorpayClient("rzp_test_qMdlo7RO3jCZ1H", "MI8nTSFLd7nIVBDDt1T5OjQp");
+		RazorpayClient razorpay = new RazorpayClient(razorpayKeyId, razorpayKeySecret);
 		Order order = orderService.findOrderById(orderId);
 
 		try {
@@ -136,7 +146,7 @@ public class PaymentController {
 
 		} catch (Exception e) {
 			System.out.println("errrr payment -------- ");
-			new RedirectView("http://localhost:3000/payment/failed");
+			new RedirectView(frontendUrl + "/payment/failed");
 			throw new RazorpayException(e.getMessage());
 		}
 
