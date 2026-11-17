@@ -3,6 +3,7 @@ package com.bazaarly.modal;
 import java.time.LocalDateTime;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIncludeProperties;
 
 import jakarta.annotation.Generated;
 import jakarta.persistence.Entity;
@@ -26,6 +27,8 @@ public class Review {
 	@JsonIgnore
 	private Product product;
 
+	// public product pages show reviews: expose only the reviewer's name, never contact details
+	@JsonIncludeProperties({"id", "firstName", "lastName"})
 	@ManyToOne
 	@JoinColumn(name="user_id")
 	private User user;
