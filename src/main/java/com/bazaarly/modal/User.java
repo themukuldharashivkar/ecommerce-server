@@ -14,6 +14,8 @@ import jakarta.persistence.Column;
 import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -42,6 +44,8 @@ public class User {
 
     @Column(name = "email")
     private String email;
+    
+    @Enumerated(EnumType.STRING)
     
     private UserRole role;
     

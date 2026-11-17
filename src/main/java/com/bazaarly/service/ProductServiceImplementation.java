@@ -151,7 +151,13 @@ public class ProductServiceImplementation implements ProductService {
 
 	@Override
 	public List<Product> searchProduct(String query) {
-		List<Product> products=productRepository.searchProduct(query);
+		// the query lower-cases the columns, so lower-case the term too (PostgreSQL LIKE is case-sensitive)
+		String term = query == null ? "" : query.toLowerCase();
+		List<Long> categoryIds = categoryRepository.findIdsByNameContaining(term);
+		if (categoryIds.isEmpty()) {
+			categoryIds = List.of(-1L); // keeps the IN clause valid; matches nothing
+		}
+		List<Product> products=productRepository.searchProduct(term, categoryIds);
 		return products;
 	}
 

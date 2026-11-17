@@ -9,7 +9,7 @@ There are two separate git repositories:
 
 | Repo | Stack | Deployed at |
 |---|---|---|
-| `ecommerce-server` (this repo) | Spring Boot 3.0.6, Java 17, Spring Security, Spring Data JPA, MySQL, jjwt 0.11.1, razorpay-java 1.4.3 | Railway |
+| `ecommerce-server` (this repo) | Spring Boot 3.0.6, Java 17, Spring Security, Spring Data JPA, PostgreSQL 16 + Flyway 9.5, jjwt 0.11.1, razorpay-java 1.4.3 | Railway (still the MySQL build from `main`) |
 | `ecommerce-frontend` | React 18 (Create React App), Redux + redux-thunk, Axios, Tailwind CSS, MUI | Vercel |
 
 ## Backend layout (`com.bazaarly`)
@@ -31,7 +31,14 @@ There are two separate git repositories:
 
 Embeddables / element collections: `PaymentDetails` (inside `Order`), `PaymentInformation` (table `payment_information`, per user), `Size` (`product_sizes`, per product).
 
-The schema is currently created by Hibernate (`ddl-auto=update`). There are no migrations yet.
+The schema is owned by Flyway (`src/main/resources/db/migration`); Hibernate runs with `ddl-auto=validate` and only checks that the entities match it.
+
+| Migration | Contents |
+|---|---|
+| `V1__init_schema.sql` | All tables, identity columns, sequences (allocation size 50) for `GenerationType.AUTO` ids, foreign keys. Enums are stored as names with `CHECK` constraints. |
+| `V2__indexes.sql` | Indexes on every foreign key, `(category_id, discounted_price)` for the catalog filter, `pg_trgm` trigram indexes for search, unique `users.email` and `cart.user_id`. |
+
+Enums (`UserRole`, `OrderStatus`, `PaymentMethod`, `PaymentStatus`) use `@Enumerated(EnumType.STRING)`, so reordering an enum can no longer corrupt stored data. Benchmarks are in [PERFORMANCE.md](PERFORMANCE.md).
 
 ### Endpoints (31)
 
@@ -56,7 +63,7 @@ Auth is a JWT in the `Authorization: Bearer <token>` header. "Public" means it w
 
 ### Seed data
 
-`DataSeeder` loads `src/main/resources/seed/products.json` (499 products) on startup when the product table is empty.
+`DataSeeder` loads `src/main/resources/seed/products.json` (499 products) on startup when the product table is empty. It goes through `ProductService`, so categories are created the same way as from the admin panel. Turn it off with `SEED_ENABLED=false` (the `test` profile does).
 
 ## Configuration and profiles
 
@@ -64,17 +71,19 @@ All environment-specific values come from environment variables. `.env.example` 
 
 | Profile | When | Behaviour |
 |---|---|---|
-| `dev` (default) | local development | Loads an optional, git-ignored `.env` from the project root. `ddl-auto=update`, SQL logging on. Has a dev-only JWT secret fallback. |
+| `dev` (default) | local development | Loads an optional, git-ignored `.env` from the project root. SQL logging on. Has a dev-only JWT secret fallback. |
 | `prod` | deployment (`SPRING_PROFILES_ACTIVE=prod`) | No secret defaults: startup fails if `JWT_SECRET`, `RAZORPAY_KEY_ID` or `RAZORPAY_KEY_SECRET` is missing, or if the JWT secret is shorter than 32 bytes. SQL logging off. |
-| `test` | automated tests | Dummy secrets; uses a separate `ecommerce_test` database with `create-drop`. |
+| `test` | automated tests | Dummy secrets, seeding off; uses a separate `ecommerce_test` database migrated by Flyway. |
 
-Variables: `PORT`, `DB_URL` or `DB_HOST`/`DB_PORT`/`DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`, `JWT_SECRET`, `JWT_EXPIRATION_MS`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `CORS_ALLOWED_ORIGINS` (comma-separated), `FRONTEND_URL` (Razorpay return URL).
+All profiles run Flyway on startup and validate the schema.
+
+Variables: `PORT`, `DB_URL` or `DB_HOST`/`DB_PORT`/`DB_NAME` (PostgreSQL, default `localhost:5432/ecommerce`), `DB_USERNAME`, `DB_PASSWORD`, `SEED_ENABLED`, `JWT_SECRET`, `JWT_EXPIRATION_MS`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `CORS_ALLOWED_ORIGINS` (comma-separated), `FRONTEND_URL` (Razorpay return URL).
 
 The frontend reads `REACT_APP_API_URL`, falling back to `http://localhost:5454` in development and the Railway URL in production builds (`src/config/api.js`).
 
 ## How to run locally
 
-Backend (needs Java 17+ and a MySQL 8 database):
+Backend (needs Java 17+ and PostgreSQL 14+ with the `pg_trgm` extension available, which is standard):
 
 ```bash
 cd ecommerce-server
@@ -82,11 +91,14 @@ cp .env.example .env        # fill in DB_PASSWORD, JWT_SECRET, Razorpay test key
 ./mvnw spring-boot:run      # http://localhost:5454, dev profile
 ```
 
-Throwaway MySQL with Docker:
+PostgreSQL with Docker:
 
 ```bash
-docker run -d --name bazaarly-mysql -e MYSQL_ROOT_PASSWORD=<password> -e MYSQL_DATABASE=ecommerce -p 3306:3306 mysql:8.0
+docker run -d --name bazaarly-postgres -e POSTGRES_USER=bazaarly -e POSTGRES_PASSWORD=<password> \
+  -e POSTGRES_DB=ecommerce -p 5432:5432 postgres:16-alpine
 ```
+
+On first start Flyway creates the schema and the seeder loads the 499 products.
 
 Frontend:
 
@@ -98,7 +110,7 @@ npm start                   # http://localhost:3000
 
 ## Tests
 
-1 test (`ECommerceApplicationTests.contextLoads`, Spring context starts on the `test` profile). It needs a running MySQL. No coverage measurement yet.
+1 test (`ECommerceApplicationTests.contextLoads`, Spring context starts on the `test` profile). It needs a running PostgreSQL with an `ecommerce_test` database. No coverage measurement yet.
 
 ## Baseline check (2026-11-17)
 
@@ -119,6 +131,14 @@ Working: signup, signin (401 on a wrong password), profile, catalog with filters
 - The Razorpay return URL was hardcoded to `http://localhost:3000`, so payments on the live site redirected to localhost. It now uses `FRONTEND_URL`.
 - Signin printed the submitted plaintext password to stdout, and the JWT filter printed every token. Both are removed.
 
+### Fixed in Step 1 (PostgreSQL + Flyway)
+
+- The Java field `PaymentDetails.razorpayPaymentId` had an invisible zero-width space in its name; removed.
+- Search and the catalog category filter relied on MySQL's case-insensitive comparison. They now lower-case both sides, so behaviour on PostgreSQL is unchanged (`JEANS` finds the same 118 products as `jeans`).
+- Nothing stopped two accounts from having the same email; there is now a unique constraint.
+
+A 32-check smoke test of the API (catalog, search, auth, cart, order, Razorpay link, reviews, ratings, admin product and order actions) passes against PostgreSQL.
+
 ### Known issues, not yet fixed
 
 | Issue | Planned in |
@@ -126,9 +146,10 @@ Working: signup, signin (401 on a wrong password), profile, catalog with filters
 | **No role enforcement.** Any logged-in user can call `/api/admin/**` (verified: a normal user gets 200). `UserRole` exists, but signup never sets a role and the JWT carries no authorities. | Step 5 (and Step 2 tests) |
 | Old secrets (Razorpay test key and secret, DB password, JWT secret) are still in git history and on GitHub. They should be rotated. | Step 10 |
 | Payment confirmation does not check that the Razorpay payment belongs to the given order, or that the order belongs to the caller. | Step 4 |
-| The catalog endpoint requires every filter parameter (400 if one is missing). | Step 5 |
+| The catalog endpoint requires every filter parameter (400 if one is missing). It also loads every product in the category, then filters colour/size/stock and pages in Java. | Step 5 |
+| Search is not paged and returns every match. | Step 5 |
+| The live Railway deployment still runs the MySQL build; moving it to PostgreSQL means a new database (existing live users and orders are not migrated). | Step 8 |
 | Reviews and ratings `GET` endpoints require login, although product detail (which includes them) is public. | Step 5 |
 | No validation on most request DTOs. Error responses use a single generic shape. | Step 5 |
 | Many `System.out.println` calls instead of a logger. | Step 5 |
-| The Java field `PaymentDetails.razorpayPaymentId` contains an invisible zero-width space in its name (the generated column is a clean `razorpay_payment_id`). | Step 1 |
 | `spring.security` HTTP Basic and form login are still enabled alongside JWT. | Step 5 |

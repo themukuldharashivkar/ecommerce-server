@@ -3,15 +3,20 @@ package com.bazaarly.modal;
 import com.bazaarly.user.domain.PaymentMethod;
 import com.bazaarly.user.domain.PaymentStatus;
 
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+
 public class PaymentDetails {
 	
+	@Enumerated(EnumType.STRING)
 	private PaymentMethod paymentMethod;
+	@Enumerated(EnumType.STRING)
 	private PaymentStatus status;
 	private String paymentId;
 	private String razorpayPaymentLinkId;
 	private String razorpayPaymentLinkReferenceId;
 	private String razorpayPaymentLinkStatus;
-	private String razorpayPaymentId​;
+	private String razorpayPaymentId;
 	
 	public PaymentDetails() {
 		// TODO Auto-generated constructor stub
@@ -41,12 +46,12 @@ public class PaymentDetails {
 		this.razorpayPaymentLinkStatus = razorpayPaymentLinkStatus;
 	}
 
-	public String getRazorpayPaymentId​() {
-		return razorpayPaymentId​;
+	public String getRazorpayPaymentId() {
+		return razorpayPaymentId;
 	}
 
-	public void setRazorpayPaymentId​(String razorpayPaymentId​) {
-		this.razorpayPaymentId​ = razorpayPaymentId​;
+	public void setRazorpayPaymentId(String razorpayPaymentId) {
+		this.razorpayPaymentId = razorpayPaymentId;
 	}
 
 	public PaymentMethod getPaymentMethod() {

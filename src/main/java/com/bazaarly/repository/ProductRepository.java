@@ -17,14 +17,17 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 	@Query("SELECT p From Product p Where LOWER(p.category.name)=:category")
 	public List<Product> findByCategory(@Param("category") String category);
 	
-	@Query("SELECT p From Product p where LOWER(p.title) Like %:query% OR LOWER(p.description) Like %:query% OR LOWER(p.brand) LIKE %:query% OR LOWER(p.category.name) LIKE %:query%")
-	public List<Product> searchProduct(@Param("query")String query);
+	// Category matches are passed in as ids (resolved first from the small categories table) so every
+	// condition is on product and PostgreSQL can combine the trigram and category indexes (see V2).
+	@Query("SELECT p From Product p where LOWER(p.title) LIKE %:query% OR LOWER(p.description) LIKE %:query% "
+			+ "OR LOWER(p.brand) LIKE %:query% OR p.category.id IN :categoryIds")
+	public List<Product> searchProduct(@Param("query") String query, @Param("categoryIds") List<Long> categoryIds);
 	
 
 
 	
 	@Query("SELECT p FROM Product p " +
-	        "WHERE (p.category.name = :category OR :category = '') " +
+	        "WHERE (LOWER(p.category.name) = LOWER(:category) OR :category = '') " +
 	        "AND ((:minPrice IS NULL AND :maxPrice IS NULL) OR (p.discountedPrice BETWEEN :minPrice AND :maxPrice)) " +
 		    "AND (:minDiscount IS NULL OR p.discountPersent >= :minDiscount) " +
 		    "ORDER BY " +
