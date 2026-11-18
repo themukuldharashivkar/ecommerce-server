@@ -75,6 +75,26 @@ class AdminAccessIntegrationTest extends IntegrationTest {
 	}
 
 	@Test
+	void readOnlyDemoAdminCanViewButNotChangeAnything() throws Exception {
+		String viewer = signIn("viewer@test.local", "viewer-password-123"); // DEMO_ADMIN_* in the test profile
+		String userToken = newUserToken();
+		Product product = createProduct("admin_test_viewer", 1000, 800, "Blue", "M");
+		Long orderId = placeOrder(userToken, product.getId());
+
+		mvc.perform(get("/api/admin/orders/").header(HttpHeaders.AUTHORIZATION, bearer(viewer))).andExpect(status().isAccepted());
+		mvc.perform(get("/api/admin/products/all").header(HttpHeaders.AUTHORIZATION, bearer(viewer))).andExpect(status().isOk());
+
+		for (MockHttpServletRequestBuilder request : adminRequests(product.getId(), orderId)) {
+			String method = request.buildRequest(new org.springframework.mock.web.MockServletContext()).getMethod();
+			if (!"GET".equals(method)) {
+				mvc.perform(request.header(HttpHeaders.AUTHORIZATION, bearer(viewer))).andExpect(status().isForbidden());
+			}
+		}
+		mvc.perform(get("/api/orders/" + orderId).header(HttpHeaders.AUTHORIZATION, bearer(userToken)))
+				.andExpect(jsonPath("$.orderStatus").value("PENDING"));
+	}
+
+	@Test
 	void anonymousCallerGets401OnAdminEndpoints() throws Exception {
 		mvc.perform(get("/api/admin/orders/")).andExpect(status().isUnauthorized());
 		mvc.perform(get("/api/admin/products/all")).andExpect(status().isUnauthorized());

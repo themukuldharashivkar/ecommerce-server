@@ -60,6 +60,8 @@ public class AppConfig {
 						.requestMatchers(HttpMethod.GET, "/api/reviews/product/**", "/api/ratings/product/**").permitAll()
 						.requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
 						.requestMatchers("/v3/api-docs", "/v3/api-docs/**", "/swagger-ui.html", "/swagger-ui/**").permitAll()
+						// the demo "viewer" admin may read the admin API; every change needs ROLE_ADMIN
+						.requestMatchers(HttpMethod.GET, "/api/admin/**").hasAnyRole("ADMIN", "ADMIN_VIEWER")
 						.requestMatchers("/api/admin/**").hasRole("ADMIN")
 						.requestMatchers("/api/**", "/actuator/**").authenticated()
 						.anyRequest().permitAll())

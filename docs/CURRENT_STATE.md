@@ -43,6 +43,7 @@ The schema is owned by Flyway (`src/main/resources/db/migration`); Hibernate run
 | `V3__order_notifications.sql` | `order_notification` outbox table, unique per (order, type). |
 | `V4__product_sizes_unique.sql` | Each product lists a size once (unique on product and lower-cased size name). |
 | `V5__payment_refunds.sql` | `razorpay_refund_id` on orders; payment status `REFUNDED`. |
+| `V6__admin_viewer_role.sql` | Role `ROLE_ADMIN_VIEWER` (read-only admin for the public demo). |
 
 Enums (`UserRole`, `OrderStatus`, `PaymentMethod`, `PaymentStatus`) use `@Enumerated(EnumType.STRING)`, so reordering an enum can no longer corrupt stored data. Benchmarks are in [PERFORMANCE.md](PERFORMANCE.md).
 
@@ -50,7 +51,7 @@ Enums (`UserRole`, `OrderStatus`, `PaymentMethod`, `PaymentStatus`) use `@Enumer
 
 Auth is a JWT in the `Authorization: Bearer <token>` header; the token carries the user's role. "Public" means it works without a token. No token or an invalid one on a protected endpoint gives 401; a valid token without the admin role on `/api/admin/**` gives 403.
 
-Signup always creates `ROLE_USER`. The only admin is the account named by `ADMIN_EMAIL`/`ADMIN_PASSWORD`, created (or promoted, keeping its password) on startup by `AdminBootstrap`.
+Signup always creates `ROLE_USER`. The only admin is the account named by `ADMIN_EMAIL`/`ADMIN_PASSWORD`, created (or promoted, keeping its password) on startup by `AdminBootstrap`. For the public demo, `AdminBootstrap` can also create a demo shopper (`DEMO_SHOPPER_*`) and a **read-only admin** (`DEMO_ADMIN_*`, `ROLE_ADMIN_VIEWER`). The read-only admin may call every `GET /api/admin/**` but gets 403 on any change.
 
 | Controller | Method and path | Access |
 |---|---|---|
@@ -80,7 +81,7 @@ Every error has the same body: `{"error": "...", "details": "uri=/api/...", "tim
 |---|---|
 | 400 | Validation failed (request DTOs use `jakarta.validation`), malformed JSON, missing or wrong-typed parameter, business rule (e.g. empty cart, email already used, payment does not match) |
 | 401 | No token or an invalid one; wrong email or password (same message for an unknown email) |
-| 403 | Valid token without the admin role on `/api/admin/**` |
+| 403 | Valid token without the admin role on `/api/admin/**` (the read-only demo admin: on any non-GET admin request) |
 | 404 | Unknown product, order, cart item or route. Another user's order also gets 404, so ids cannot be probed. |
 | 405 / 415 | Wrong HTTP method or content type |
 | 429 | Rate limit on `/auth/signin` (10 per minute per IP) or `/auth/signup` (5 per 10 minutes per IP), with `Retry-After` |
@@ -166,7 +167,7 @@ All environment-specific values come from environment variables. `.env.example` 
 
 All profiles run Flyway on startup and validate the schema.
 
-Variables: `ORDER_RESERVATION_TTL`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `RATE_LIMIT_SIGNIN_REQUESTS`, `RATE_LIMIT_SIGNIN_PERIOD`, `RATE_LIMIT_SIGNUP_REQUESTS`, `RATE_LIMIT_SIGNUP_PERIOD`, `FORWARD_HEADERS_STRATEGY` (prod default `framework`: client IP from `X-Forwarded-For`, so only use behind a proxy), `API_DOCS_ENABLED`, `MAIL_ENABLED`, `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM`, `CACHE_TYPE`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_SSL`, `CACHE_CATALOG_TTL`, `CACHE_PRODUCT_TTL`, `PORT`, `DB_URL` or `DB_HOST`/`DB_PORT`/`DB_NAME` (PostgreSQL, default `localhost:5432/ecommerce`), `DB_USERNAME`, `DB_PASSWORD`, `SEED_ENABLED`, `JWT_SECRET`, `JWT_EXPIRATION_MS`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `CORS_ALLOWED_ORIGINS` (comma-separated), `FRONTEND_URL` (Razorpay return URL).
+Variables: `DEMO_SHOPPER_EMAIL`, `DEMO_SHOPPER_PASSWORD`, `DEMO_ADMIN_EMAIL`, `DEMO_ADMIN_PASSWORD`, `ORDER_RESERVATION_TTL`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `RATE_LIMIT_SIGNIN_REQUESTS`, `RATE_LIMIT_SIGNIN_PERIOD`, `RATE_LIMIT_SIGNUP_REQUESTS`, `RATE_LIMIT_SIGNUP_PERIOD`, `FORWARD_HEADERS_STRATEGY` (prod default `framework`: client IP from `X-Forwarded-For`, so only use behind a proxy), `API_DOCS_ENABLED`, `MAIL_ENABLED`, `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM`, `CACHE_TYPE`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_SSL`, `CACHE_CATALOG_TTL`, `CACHE_PRODUCT_TTL`, `PORT`, `DB_URL` or `DB_HOST`/`DB_PORT`/`DB_NAME` (PostgreSQL, default `localhost:5432/ecommerce`), `DB_USERNAME`, `DB_PASSWORD`, `SEED_ENABLED`, `JWT_SECRET`, `JWT_EXPIRATION_MS`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `CORS_ALLOWED_ORIGINS` (comma-separated), `FRONTEND_URL` (Razorpay return URL).
 
 The frontend reads `REACT_APP_API_URL`, falling back to `http://localhost:5454` in development and the Railway URL in production builds (`src/config/api.js`).
 
@@ -213,6 +214,10 @@ npm install
 npm start                   # http://localhost:3000
 ```
 
+## Deployment
+
+Render (API and PostgreSQL, `render.yaml`) + Upstash (Redis) + Vercel (storefront). The steps, the free-tier limits (about 2-minute cold start after 15 minutes idle, measured in a local rehearsal at 0.1 CPU / 512 MB) and the live checks are in [DEPLOYMENT.md](DEPLOYMENT.md).
+
 ## CI
 
 One GitHub Actions workflow per repository, on every push and pull request.
@@ -243,8 +248,8 @@ Measured on 2026-11-18 (`./mvnw clean verify`, 19 s on an Apple M5):
 | | Count |
 |---|---|
 | Unit tests (JUnit 5 + Mockito) | 72 |
-| Integration tests (Spring Boot + Testcontainers PostgreSQL; caching tests also use a Redis container) | 115 |
-| **Total** | **187, all passing** |
+| Integration tests (Spring Boot + Testcontainers PostgreSQL; caching tests also use a Redis container) | 116 |
+| **Total** | **188, all passing** |
 
 JaCoCo line coverage: service layer (`service` + `payment` packages) **87.0%** (450/517 lines); `service` alone 92.4%. `payment` is lower because `RazorpayPaymentGateway`, the thin wrapper around the Razorpay SDK, is deliberately not exercised. Whole codebase 79.9% of lines, 60.3% of branches.
 
