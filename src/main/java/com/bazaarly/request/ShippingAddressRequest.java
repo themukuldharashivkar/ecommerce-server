@@ -16,7 +16,7 @@ public record ShippingAddressRequest(
 		@Size(max = 100) String city,
 		@Size(max = 100) String state,
 		@Pattern(regexp = "^$|^[A-Za-z0-9 -]{3,10}$", message = "Enter a valid postal code") String zipCode,
-		@Pattern(regexp = "^$|^\\+?[0-9 ]{7,15}$", message = "Enter a valid phone number") String mobile) {
+		@Pattern(regexp = "^$|^\\+?[0-9 ()-]{7,20}$", message = "Enter a valid phone number") String mobile) {
 
 	@jakarta.validation.constraints.AssertTrue(message = "Name, street, city, state, postal code and phone are required")
 	@com.fasterxml.jackson.annotation.JsonIgnore

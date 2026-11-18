@@ -90,6 +90,29 @@ class ValidationIntegrationTest extends IntegrationTest {
 	}
 
 	@Test
+	void theStorefrontsAddToCartPayloadWithoutQuantityAddsOne() throws Exception {
+		// exactly what ProductDetails.jsx sends: { productId, size }
+		String token = newUserToken();
+		Product product = createProduct("validation_tee", 1000, 800, "Red", "M");
+		mvc.perform(put("/api/cart/add").header(HttpHeaders.AUTHORIZATION, bearer(token)).contentType(MediaType.APPLICATION_JSON)
+						.content(json.writeValueAsString(Map.of("productId", product.getId(), "size", "M"))))
+				.andExpect(status().isAccepted());
+		mvc.perform(get("/api/cart/").header(HttpHeaders.AUTHORIZATION, bearer(token)))
+				.andExpect(jsonPath("$.cartItems[0].quantity").value(1));
+	}
+
+	@Test
+	void phoneNumbersWithSpacesDashesAndBracketsAreAccepted() throws Exception {
+		String token = newUserToken();
+		Product product = createProduct("validation_phone", 1000, 800, "Red", "M");
+		mvc.perform(put("/api/cart/add").header(HttpHeaders.AUTHORIZATION, bearer(token)).contentType(MediaType.APPLICATION_JSON)
+				.content(json.writeValueAsString(Map.of("productId", product.getId(), "size", "M"))));
+		mvc.perform(post("/api/orders/").header(HttpHeaders.AUTHORIZATION, bearer(token)).contentType(MediaType.APPLICATION_JSON)
+						.content(ADDRESS.replace("9876543210", "+91 (98765) 43-210")))
+				.andExpect(status().isOk());
+	}
+
+	@Test
 	void addingThreeOfAnItemKeepsTheQuantity() throws Exception {
 		// regression: the quantity used to be stored as 1
 		String token = newUserToken();

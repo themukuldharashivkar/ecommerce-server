@@ -201,8 +201,8 @@ Measured on 2026-11-18 (`./mvnw clean verify`, 19 s on an Apple M5):
 | | Count |
 |---|---|
 | Unit tests (JUnit 5 + Mockito) | 72 |
-| Integration tests (Spring Boot + Testcontainers PostgreSQL; caching tests also use a Redis container) | 105 |
-| **Total** | **177, all passing** |
+| Integration tests (Spring Boot + Testcontainers PostgreSQL; caching tests also use a Redis container) | 107 |
+| **Total** | **179, all passing** |
 
 JaCoCo line coverage: service layer (`service` + `payment` packages) **87.0%** (450/517 lines); `service` alone 92.4%. `payment` is lower because `RazorpayPaymentGateway`, the thin wrapper around the Razorpay SDK, is deliberately not exercised. Whole codebase 79.9% of lines, 60.3% of branches.
 
@@ -271,6 +271,7 @@ A 32-check smoke test of the API (catalog, search, auth, cart, order, Razorpay l
 ### Fixed after Step 5: stock and cart
 
 - Placing an order did not reduce stock; the cart was never emptied. See "Stock and the cart" above.
+- **Regression from Step 5, fixed:** the storefront's add-to-cart sends no `quantity`, and the new `@Min(1)` rejected it, so adding to the cart from the real frontend failed. A missing quantity now means 1 (tested with the exact storefront payload). The phone pattern also accepts dashes and brackets now.
 - **Hibernate rewrote `product_sizes` on every flush of a loaded product.** `Size` (an `@ElementCollection` embeddable) had no `equals`/`hashCode`, so Hibernate saw the collection as changed and deleted and re-inserted its rows from memory. With stock now changed in SQL, this duplicated sizes and undid reservations. Fixed with value equality; V4 adds a unique index so the database rejects any duplicate. This also makes the order of sizes in responses stable.
 
 ### Known issues, not yet fixed
@@ -282,3 +283,4 @@ A 32-check smoke test of the API (catalog, search, auth, cart, order, Razorpay l
 | Rate limits are per instance (in memory). With several instances each enforces its own limit. | if scaled out |
 | Admin "list all orders" and the user's order history return the first 50 by default; the frontend does not request further pages yet. | open |
 | Cancelling a paid order does not refund it through Razorpay (test mode only). | open |
+| The admin "update product" page calls `PUT /api/admin/products/{id}` (no `/update`) without a body; it was already broken before the upgrade. | open |

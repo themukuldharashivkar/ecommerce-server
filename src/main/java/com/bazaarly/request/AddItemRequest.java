@@ -15,7 +15,7 @@ public class AddItemRequest {
 	private String size;
 	@Min(value = 1, message = "Quantity must be at least 1")
 	@Max(value = 10, message = "You can add at most 10 of an item")
-	private int quantity;
+	private int quantity = 1; // the storefront sends no quantity: one item
 	private Integer price;
 	
 	public AddItemRequest() {
