@@ -1,6 +1,9 @@
 package com.bazaarly.service;
 
 
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Caching;
+import com.bazaarly.cache.CacheNames;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -35,6 +38,8 @@ public class ProductServiceImplementation implements ProductService {
 	
 
 	@Override
+	// a new product can appear on any catalog page
+	@CacheEvict(cacheNames = CacheNames.CATALOG, allEntries = true)
 	public Product createProduct(CreateProductRequest req) {
 		
 		Category topLevel=categoryRepository.findByName(req.getTopLavelCategory());
@@ -94,6 +99,8 @@ public class ProductServiceImplementation implements ProductService {
 	}
 
 	@Override
+	@Caching(evict = { @CacheEvict(cacheNames = CacheNames.CATALOG, allEntries = true),
+			@CacheEvict(cacheNames = CacheNames.PRODUCT, key = "#productId") })
 	public String deleteProduct(Long productId) throws ProductException {
 		
 		Product product=findProductById(productId);
@@ -108,6 +115,8 @@ public class ProductServiceImplementation implements ProductService {
 	}
 
 	@Override
+	@Caching(evict = { @CacheEvict(cacheNames = CacheNames.CATALOG, allEntries = true),
+			@CacheEvict(cacheNames = CacheNames.PRODUCT, key = "#productId") })
 	public Product updateProduct(Long productId,Product req) throws ProductException {
 		Product product=findProductById(productId);
 		

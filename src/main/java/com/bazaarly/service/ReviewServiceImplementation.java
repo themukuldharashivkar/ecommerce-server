@@ -1,5 +1,8 @@
 package com.bazaarly.service;
 
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Caching;
+import com.bazaarly.cache.CacheNames;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -27,6 +30,9 @@ public class ReviewServiceImplementation implements ReviewService {
 	}
 
 	@Override
+	// product JSON (detail and catalog pages) embeds its reviews and ratings
+	@Caching(evict = { @CacheEvict(cacheNames = CacheNames.CATALOG, allEntries = true),
+			@CacheEvict(cacheNames = CacheNames.PRODUCT, key = "#req.productId") })
 	public Review createReview(ReviewRequest req,User user) throws ProductException {
 		// TODO Auto-generated method stub
 		Product product=productService.findProductById(req.getProductId());

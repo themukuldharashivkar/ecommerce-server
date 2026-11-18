@@ -14,6 +14,7 @@ docker run -d --name bazaarly-postgres -e POSTGRES_USER=bazaarly -e POSTGRES_PAS
   -e POSTGRES_DB=ecommerce -p 5432:5432 postgres:16-alpine
 
 cp .env.example .env     # set DB_PASSWORD, ADMIN_EMAIL/ADMIN_PASSWORD, Razorpay test keys
+                         # optional: CACHE_TYPE=redis with a local Redis (default is an in-memory cache)
 ./mvnw spring-boot:run   # http://localhost:5454
 ```
 
@@ -30,7 +31,7 @@ Needs Docker running: integration tests start a throwaway PostgreSQL 16 containe
 | Suite | Where | What |
 |---|---|---|
 | Unit (JUnit 5 + Mockito) | `src/test/java/com/bazaarly/unit` | cart, cart items, orders, payment creation and confirmation, product filtering and search, JWT, roles, admin bootstrap |
-| Integration (Testcontainers) | `src/test/java/com/bazaarly/integration` | signup/signin and JWT access (valid, expired, forged, malformed), admin-only endpoints (normal user gets 403), cart → order → payment flow, catalog and search queries on PostgreSQL, error response shape and status codes |
+| Integration (Testcontainers) | `src/test/java/com/bazaarly/integration` | signup/signin and JWT access (valid, expired, forged, malformed), admin-only endpoints (normal user gets 403), cart → order → payment flow, catalog and search queries on PostgreSQL, error response shape and status codes, Redis cache hits and evictions (real Redis container) |
 
 Coverage report (JaCoCo): `target/site/jacoco/index.html` after `mvnw verify`.
 

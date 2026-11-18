@@ -2,9 +2,8 @@ package com.bazaarly.controller;
 
 import java.util.List;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -12,44 +11,48 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.bazaarly.cache.CatalogQuery;
+import com.bazaarly.cache.ProductResponseCache;
 import com.bazaarly.exception.ProductException;
 import com.bazaarly.modal.Product;
 import com.bazaarly.service.ProductService;
+import com.fasterxml.jackson.core.JsonProcessingException;
 
 @RestController
 @RequestMapping("/api")
 public class UserProductController {
 	
-	@Autowired
-	private ProductService productService;
+	private final ProductService productService;
+	private final ProductResponseCache productResponseCache;
 	
-	public UserProductController(ProductService productService) {
+	public UserProductController(ProductService productService, ProductResponseCache productResponseCache) {
 		this.productService=productService;
+		this.productResponseCache=productResponseCache;
 	}
 	
 	
-	@GetMapping("/products")
-	public ResponseEntity<Page<Product>> findProductByCategoryHandler(@RequestParam String category,
+	// served from the catalog cache; the body is the JSON of a Page<Product>
+	@GetMapping(value = "/products", produces = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<String> findProductByCategoryHandler(@RequestParam String category,
 			@RequestParam List<String>color,@RequestParam List<String> size,@RequestParam Integer minPrice,
 			@RequestParam Integer maxPrice, @RequestParam Integer minDiscount, @RequestParam String sort, 
-			@RequestParam String stock, @RequestParam Integer pageNumber,@RequestParam Integer pageSize){
+			@RequestParam String stock, @RequestParam Integer pageNumber,@RequestParam Integer pageSize)
+			throws JsonProcessingException {
 
-		
-		Page<Product> res= productService.getAllProduct(category, color, size, minPrice, maxPrice, minDiscount, sort,stock,pageNumber,pageSize);
-		
-		System.out.println("complete products");
-		return new ResponseEntity<>(res,HttpStatus.ACCEPTED);
+		String page = productResponseCache.catalogPage(new CatalogQuery(category, color, size, minPrice, maxPrice,
+				minDiscount, sort, stock, pageNumber, pageSize));
+		return new ResponseEntity<>(page,HttpStatus.ACCEPTED);
 		
 	}
 	
 
 	
-	@GetMapping("/products/id/{productId}")
-	public ResponseEntity<Product> findProductByIdHandler(@PathVariable Long productId) throws ProductException{
-		
-		Product product=productService.findProductById(productId);
-		
-		return new ResponseEntity<Product>(product,HttpStatus.ACCEPTED);
+	// served from the product cache; the body is the JSON of a Product
+	@GetMapping(value = "/products/id/{productId}", produces = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<String> findProductByIdHandler(@PathVariable Long productId)
+			throws ProductException, JsonProcessingException {
+
+		return new ResponseEntity<>(productResponseCache.product(productId),HttpStatus.ACCEPTED);
 	}
 
 	@GetMapping("/products/search")

@@ -9,14 +9,16 @@ There are two separate git repositories:
 
 | Repo | Stack | Deployed at |
 |---|---|---|
-| `ecommerce-server` (this repo) | Spring Boot 3.0.6, Java 17, Spring Security, Spring Data JPA, PostgreSQL 16 + Flyway 9.5, jjwt 0.11.1, razorpay-java 1.4.3 | Railway (still the MySQL build from `main`) |
+| `ecommerce-server` (this repo) | Spring Boot 3.0.6, Java 17, Spring Security, Spring Data JPA, PostgreSQL 16 + Flyway 9.5, Redis (Spring Cache), jjwt 0.11.1, razorpay-java 1.4.3 | Railway (still the MySQL build from `main`) |
 | `ecommerce-frontend` | React 18 (Create React App), Redux + redux-thunk, Axios, Tailwind CSS, MUI | Vercel |
 
 ## Backend layout (`com.bazaarly`)
 
 | Package | Contents |
 |---|---|
-| `config` | Security filter chain and CORS (`AppConfig`), JWT creation and validation, `DataSeeder` |
+| `config` | Security filter chain and CORS (`AppConfig`), JWT creation and validation, `DataSeeder`, `AdminBootstrap` |
+| `cache` | Response cache for the public catalog endpoints (`ProductResponseCache`, `CacheConfig`) |
+| `payment` | `PaymentService`, `PaymentGateway` interface and its Razorpay implementation |
 | `controller` | 12 REST controllers |
 | `service` | Interface + implementation per domain (user, product, cart, cart item, order, order item, rating, review, category) |
 | `repository` | 10 Spring Data JPA repositories |
@@ -63,6 +65,24 @@ Signup always creates `ROLE_USER`. The only admin is the account named by `ADMIN
 | Admin products | `POST /api/admin/products/`, `POST /api/admin/products/creates`, `GET /api/admin/products/all`, `PUT /api/admin/products/{id}/update`, `DELETE /api/admin/products/{id}/delete` | `ROLE_ADMIN` |
 | Admin orders | `GET /api/admin/orders/`, `PUT /api/admin/orders/{id}/confirmed`, `.../ship`, `.../deliver`, `.../cancel`, `DELETE .../{id}/delete` | `ROLE_ADMIN` |
 
+### Caching
+
+`GET /api/products` (catalog pages) and `GET /api/products/id/{id}` are cached. The cached value is the finished JSON response, so a hit is byte-for-byte what a miss returns.
+
+| | |
+|---|---|
+| Store | `CACHE_TYPE`: `redis` (prod default), `simple` in-memory (dev and test default, no Redis needed), `none` |
+| Keys | `bazaarly:product::<id>`; `bazaarly:catalog::<normalised query>` (category, colour and size lower-cased, colour/size sorted) |
+| TTL | catalog 10 min, product 30 min (`CACHE_CATALOG_TTL`, `CACHE_PRODUCT_TTL`); a safety net only |
+| Eviction | create product → all catalog pages; update or delete product, new review or rating → that product and all catalog pages |
+| Redis failure | logged and treated as a miss: requests are served from the database (checked by stopping Redis under a running app). 500 ms command timeout. |
+
+Known limit: an eviction runs after the write. A read that started before the write can still store old data just after the eviction, and that entry stays until its TTL runs out.
+
+Search (`/api/products/search`) is not cached. The plan also mentioned a category list, but there is no category endpoint to cache.
+
+Measurements are in [PERFORMANCE.md](PERFORMANCE.md#2-redis-cache-for-the-catalog-endpoints-upgrade-step-3-measured-2026-11-18): catalog p95 6.53 → 0.32 ms (concurrency 1) and 20.42 → 0.78 ms (concurrency 10).
+
 ### Seed data
 
 `DataSeeder` loads `src/main/resources/seed/products.json` (499 products) on startup when the product table is empty. It goes through `ProductService`, so categories are created the same way as from the admin panel. Turn it off with `SEED_ENABLED=false` (the `test` profile does).
@@ -79,7 +99,7 @@ All environment-specific values come from environment variables. `.env.example` 
 
 All profiles run Flyway on startup and validate the schema.
 
-Variables: `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `PORT`, `DB_URL` or `DB_HOST`/`DB_PORT`/`DB_NAME` (PostgreSQL, default `localhost:5432/ecommerce`), `DB_USERNAME`, `DB_PASSWORD`, `SEED_ENABLED`, `JWT_SECRET`, `JWT_EXPIRATION_MS`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `CORS_ALLOWED_ORIGINS` (comma-separated), `FRONTEND_URL` (Razorpay return URL).
+Variables: `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `CACHE_TYPE`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_SSL`, `CACHE_CATALOG_TTL`, `CACHE_PRODUCT_TTL`, `PORT`, `DB_URL` or `DB_HOST`/`DB_PORT`/`DB_NAME` (PostgreSQL, default `localhost:5432/ecommerce`), `DB_USERNAME`, `DB_PASSWORD`, `SEED_ENABLED`, `JWT_SECRET`, `JWT_EXPIRATION_MS`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `CORS_ALLOWED_ORIGINS` (comma-separated), `FRONTEND_URL` (Razorpay return URL).
 
 The frontend reads `REACT_APP_API_URL`, falling back to `http://localhost:5454` in development and the Railway URL in production builds (`src/config/api.js`).
 
@@ -114,17 +134,17 @@ npm start                   # http://localhost:3000
 
 Run with `./mvnw verify` (needs Docker; integration tests use a Testcontainers PostgreSQL 16 and the real Flyway migrations). Razorpay is mocked at the `PaymentGateway` interface and never called.
 
-Measured on 2026-11-17 (`./mvnw clean verify`, 12 s on an Apple M5):
+Measured on 2026-11-18 (`./mvnw clean verify`, 12 s on an Apple M5):
 
 | | Count |
 |---|---|
-| Unit tests (JUnit 5 + Mockito) | 50 |
-| Integration tests (Spring Boot + Testcontainers) | 39 |
-| **Total** | **89, all passing** |
+| Unit tests (JUnit 5 + Mockito) | 54 |
+| Integration tests (Spring Boot + Testcontainers PostgreSQL; caching tests also use a Redis container) | 47 |
+| **Total** | **101, all passing** |
 
-JaCoCo line coverage: service layer (`service` + `payment` packages) **87.1%** (303/348 lines); `service` alone 95.1%. `payment` is 51.6% because `RazorpayPaymentGateway`, the thin wrapper around the Razorpay SDK, is deliberately not exercised. Whole codebase 76.6% of lines, 48.2% of branches.
+JaCoCo line coverage: service layer (`service` + `payment` packages) **87.2%** (306/351 lines); `service` alone 95.1%. `payment` is lower because `RazorpayPaymentGateway`, the thin wrapper around the Razorpay SDK, is deliberately not exercised. `cache` is 74.5%: the Redis-failure fallback was checked by hand (stopping Redis under a running app), not by an automated test. Whole codebase 76.5% of lines.
 
-To check that the tests catch real regressions, two bugs were planted temporarily: removing the admin role rule failed 2 tests, and marking uncaptured payments as paid failed 2 tests.
+To check that the tests catch real regressions, bugs were planted temporarily: removing the admin role rule failed 2 tests, marking uncaptured payments as paid failed 2 tests, and removing the cache eviction on product update failed 1 test.
 
 ## Baseline check (2026-11-17)
 

@@ -2,6 +2,9 @@
 
 Every number here comes from a real run. Each section states how it was measured.
 
+1. [Database indexes](#1-database-indexes-flyway-v2__indexessql-measured-2026-11-17)
+2. [Redis cache for the catalog endpoints](#2-redis-cache-for-the-catalog-endpoints-upgrade-step-3-measured-2026-11-18)
+
 ## 1. Database indexes (Flyway `V2__indexes.sql`), measured 2026-11-17
 
 ### What was measured
@@ -77,3 +80,69 @@ python3 -I scripts/benchmark/explain_bench.py after
 `explain_bench.py` runs `psql` inside a Docker container. Set `BENCH_CONTAINER`, `BENCH_DB` and `BENCH_USER` if yours differ.
 
 A second run following these steps on a fresh copy gave medians within 10% of the table above (for example catalog `men_jeans` 23.20 → 13.08 ms, search `silk` 30.81 → 1.80 ms).
+
+## 2. Redis cache for the catalog endpoints (upgrade Step 3), measured 2026-11-18
+
+### What was measured
+
+End-to-end HTTP latency of the two cached endpoints, measured with ApacheBench (`ab -k`, keep-alive):
+
+- **catalog**: `GET /api/products?category=men_jeans&sort=price_low&pageNumber=0&pageSize=12&...`, the request the shop page sends
+- **detail**: `GET /api/products/id/448`, a product with a review and a rating
+
+Each case had 300 warm-up requests, then 3 runs of 2,000 requests, at concurrency 1 and 10. The table shows the **median of the 3 runs**.
+All 24,000 measured requests succeeded (0 failed, 0 non-2xx).
+
+The only difference between the two setups is `CACHE_TYPE`: `none` (no cache) or `redis`. With Redis, every request after the first is a cache hit, which is the best case.
+
+### Environment
+
+- App: the `prod` profile (SQL logging off), run as a jar on OpenJDK 21.0.13
+- Database: PostgreSQL 16.15 with the real catalog (499 products)
+- Cache: Redis 7.4.12 in Docker
+- Machine: Apple M5 MacBook, 16 GB RAM
+- `ab` ran on the same machine over loopback, so the numbers have no network latency. In a deployment, each request also pays the network round trip to the client, and each cache hit pays a round trip to Redis.
+
+### Results
+
+| Endpoint | Concurrency | No cache p50 / p95 | Redis p50 / p95 | p95 speed-up | Throughput (req/s) |
+|---|---|---|---|---|---|
+| catalog | 1 | 4.89 / 6.53 ms | 0.21 / 0.32 ms | 20.4× | 194 → 4,356 |
+| catalog | 10 | 14.72 / 20.42 ms | 0.59 / 0.78 ms | 26.2× | 639 → 16,424 |
+| detail | 1 | 0.77 / 0.92 ms | 0.20 / 0.24 ms | 3.8× | 1,258 → 4,936 |
+| detail | 10 | 1.97 / 2.59 ms | 0.45 / 0.57 ms | 4.5× | 4,854 → 21,859 |
+
+p99 at concurrency 10: catalog 26.88 → 1.19 ms, detail 2.92 → 0.68 ms.
+
+### Why the catalog gains the most
+
+Without a cache, a catalog request loads every product in the category, filters and pages them in Java, loads each product's sizes, ratings and reviews one product at a time, then serialises the page to JSON.
+A cache hit skips all of that: it returns the stored JSON string straight from Redis. A product detail page is a single primary-key lookup, so there is less work to save.
+
+### Limits
+
+- **These are hit latencies.** A miss costs the same as no cache, plus one Redis write. The real hit rate depends on traffic: catalog keys combine category, filters, sort and page, so less common filter combinations will often miss. The home page and default shop pages repeat the same few requests, so they should hit often.
+- **Small dataset.** The numbers come from the real 499-product catalog. With more products the uncached catalog gets slower (see section 1, Limits).
+- **One machine, loopback.** Compare the two columns with each other; don't read them as production latencies.
+
+### Correctness checks
+
+- Responses with the cache match the responses from before caching for 7 captured requests (4 catalog pages, 2 product pages, 1 unknown product), including status code and `Content-Type`.
+  The comparison sorts each product's `sizes`, because their order already changed between requests before this work (`Product.sizes` is a `HashSet`), and ignores error timestamps.
+- A cache hit returns the same bytes as the miss that stored it. Without a cache, the same request returned different bytes from one request to the next (the `sizes` order again).
+- `CachingIntegrationTest` (real Redis via Testcontainers) proves hits and evictions:
+  - it changes the database behind the application's back, and the API keeps serving the cached data
+  - an admin update, a new product, a review, a rating or a delete makes the fresh data visible on the next request
+
+### Reproduce
+
+```bash
+docker run -d --name bazaarly-redis -p 6379:6379 redis:7-alpine
+./mvnw -DskipTests package
+# with the variables from .env exported:
+SPRING_PROFILES_ACTIVE=prod CACHE_TYPE=none  java -jar target/e-commerce-0.0.1-SNAPSHOT.jar &
+scripts/benchmark/cache_bench.sh no-cache http://localhost:5454 <product id>
+# stop the app, then:
+SPRING_PROFILES_ACTIVE=prod CACHE_TYPE=redis java -jar target/e-commerce-0.0.1-SNAPSHOT.jar &
+scripts/benchmark/cache_bench.sh redis http://localhost:5454 <product id>
+```
