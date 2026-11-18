@@ -167,11 +167,29 @@ The frontend reads `REACT_APP_API_URL`, falling back to `http://localhost:5454` 
 
 ## How to run locally
 
-Backend (needs Java 17+ and PostgreSQL 14+ with the `pg_trgm` extension available, which is standard):
+**Docker (whole stack):** `docker compose up --build` in this repo starts the API, PostgreSQL 16, Redis and Mailpit. Add `--profile storefront` to build and serve the React app from `../ecommerce-frontend`. See the README for URLs and the local-only defaults.
+
+| Image | Build | Runtime |
+|---|---|---|
+| API (`Dockerfile`) | `eclipse-temurin:17-jdk` + Maven wrapper; Spring Boot layered jar | `eclipse-temurin:17-jre` (multi-arch, so it runs on arm64 and amd64), non-root user `bazaarly`, healthcheck on `/actuator/health`. App layers add about 69 MB to the JRE base: 67.4 MB of dependencies (cached between builds) and 1.1 MB of application code. |
+| Storefront (`../ecommerce-frontend/Dockerfile`) | `node:20-alpine`, `REACT_APP_API_URL` as a build argument | `nginx:1.27-alpine` with single-page-app routing; about 90 MB |
+
+Compose details:
+- every service has a healthcheck, and the API waits for PostgreSQL, Redis and Mailpit to be healthy
+- PostgreSQL and Redis are not published to the host
+- PostgreSQL data is in the named volume `bazaarly_postgres-data`
+
+Verified 2026-11-18 from fresh `git clone`s of both repos (no `.env`, no build output):
+- `docker compose --profile storefront up --build`: all five services healthy within 33 s. The image layers came from Docker's build cache; cold builds took about 5.5 min (API) and 2 min (storefront).
+- The 32-check API smoke test passed (the payment-link check was skipped: placeholder Razorpay keys).
+- The storefront served deep links and pointed at the API; an order confirmation was delivered to Mailpit.
+- After `docker compose down` and `up`, users, orders and products were unchanged, Flyway reported the schema up to date, and nothing was re-seeded.
+
+**Without Docker:**
 
 ```bash
 cd ecommerce-server
-cp .env.example .env        # fill in DB_PASSWORD, JWT_SECRET, Razorpay test keys
+cp .env.example .env        # fill in DB_PASSWORD, ADMIN_EMAIL/ADMIN_PASSWORD, Razorpay test keys
 ./mvnw spring-boot:run      # http://localhost:5454, dev profile
 ```
 
@@ -181,8 +199,6 @@ PostgreSQL with Docker:
 docker run -d --name bazaarly-postgres -e POSTGRES_USER=bazaarly -e POSTGRES_PASSWORD=<password> \
   -e POSTGRES_DB=ecommerce -p 5432:5432 postgres:16-alpine
 ```
-
-On first start Flyway creates the schema and the seeder loads the 499 products.
 
 Frontend:
 

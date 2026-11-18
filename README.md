@@ -7,21 +7,44 @@ PostgreSQL with Flyway migrations, stateless JWT auth.
 
 ## Run locally
 
-Needs Java 17+ and PostgreSQL. With Docker:
+### With Docker (one command)
+
+Needs Docker. From this folder:
 
 ```bash
-docker run -d --name bazaarly-postgres -e POSTGRES_USER=bazaarly -e POSTGRES_PASSWORD=<password> \
-  -e POSTGRES_DB=ecommerce -p 5432:5432 postgres:16-alpine
-
-cp .env.example .env     # set DB_PASSWORD, ADMIN_EMAIL/ADMIN_PASSWORD, Razorpay test keys
-                         # optional: CACHE_TYPE=redis with a local Redis (default is an in-memory cache)
-./mvnw spring-boot:run   # http://localhost:5454
+docker compose up --build
 ```
 
-On first start Flyway creates the schema, the 499 demo products are loaded, and the admin account from `ADMIN_EMAIL`/`ADMIN_PASSWORD` is created.
+| | URL |
+|---|---|
+| API | http://localhost:5454 |
+| Swagger UI | http://localhost:5454/swagger-ui.html |
+| Health | http://localhost:5454/actuator/health |
+| Mail inbox (order confirmations) | http://localhost:8025 |
 
-- API docs: http://localhost:5454/swagger-ui.html (sign in with `POST /auth/signin`, then **Authorize** with the `jwt` value)
-- Health: http://localhost:5454/actuator/health
+This starts the API with PostgreSQL 16, Redis and Mailpit. On first start Flyway creates the schema and the 499 demo products are loaded. Data lives in the `bazaarly_postgres-data` volume, so it survives restarts (`docker compose down -v` removes it).
+
+To run the React storefront too (http://localhost:3000), check out `ecommerce-frontend` next to this folder and add the profile:
+
+```bash
+docker compose --profile storefront up --build
+```
+
+Without a `.env` file the stack uses **local-only** defaults:
+- admin login `admin@bazaarly.local` / `admin-local-only-123`
+- a fixed JWT secret
+- placeholder Razorpay keys, so creating a payment link fails until you set `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET`
+
+Copy `.env.example` to `.env` to override any of them. Never deploy with the defaults.
+
+### Without Docker
+
+Needs Java 17+ and PostgreSQL 14+.
+
+```bash
+cp .env.example .env     # set DB_PASSWORD, ADMIN_EMAIL/ADMIN_PASSWORD, Razorpay test keys
+./mvnw spring-boot:run   # http://localhost:5454, dev profile (in-memory cache, emails logged)
+```
 
 ## Tests
 
