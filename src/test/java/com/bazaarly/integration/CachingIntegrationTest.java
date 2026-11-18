@@ -145,14 +145,14 @@ class CachingIntegrationTest extends IntegrationTest {
 						.header(HttpHeaders.AUTHORIZATION, bearer(adminToken())))
 				.andExpect(status().isAccepted());
 
-		mvc.perform(get("/api/products/id/" + product.getId())).andExpect(status().isBadRequest());
+		mvc.perform(get("/api/products/id/" + product.getId())).andExpect(status().isNotFound());
 		assertThat(redis.hasKey("bazaarly:product::" + product.getId())).isFalse();
 	}
 
 	@Test
 	void errorsAreNotCached() throws Exception {
 		long missing = 900_000_000L + (long) (Math.random() * 1000);
-		mvc.perform(get("/api/products/id/" + missing)).andExpect(status().isBadRequest());
+		mvc.perform(get("/api/products/id/" + missing)).andExpect(status().isNotFound());
 		assertThat(redis.hasKey("bazaarly:product::" + missing)).isFalse();
 	}
 

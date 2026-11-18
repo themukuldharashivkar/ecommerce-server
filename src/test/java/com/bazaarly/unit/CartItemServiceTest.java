@@ -64,6 +64,19 @@ class CartItemServiceTest {
 	}
 
 	@Test
+	void createCartItemKeepsTheRequestedQuantity() {
+		// regression: the quantity used to be forced to 1
+		item.setQuantity(3);
+		when(cartItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		CartItem created = service.createCartItem(item);
+
+		assertThat(created.getQuantity()).isEqualTo(3);
+		assertThat(created.getPrice()).isEqualTo(3000);
+		assertThat(created.getDiscountedPrice()).isEqualTo(2100);
+	}
+
+	@Test
 	void ownerCanChangeQuantityAndPricesAreRecalculated() throws Exception {
 		CartItem change = new CartItem();
 		change.setQuantity(3);
@@ -113,7 +126,7 @@ class CartItemServiceTest {
 		when(cartItemRepository.findById(99L)).thenReturn(Optional.empty());
 
 		assertThatThrownBy(() -> service.findCartItemById(99L))
-				.isInstanceOf(CartItemException.class)
+				.isInstanceOf(com.bazaarly.exception.CartItemNotFoundException.class)
 				.hasMessageContaining("99");
 	}
 }

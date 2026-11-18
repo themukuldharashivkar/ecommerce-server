@@ -1,5 +1,6 @@
 package com.bazaarly.service;
 
+import com.bazaarly.exception.CartItemNotFoundException;
 import java.util.Optional;
 
 import org.springframework.stereotype.Service;
@@ -28,7 +29,9 @@ public class CartItemServiceImplementation implements CartItemService {
 	@Override
 	public CartItem createCartItem(CartItem cartItem) {
 		
-		cartItem.setQuantity(1);
+		if (cartItem.getQuantity() < 1) {
+			cartItem.setQuantity(1); // the requested quantity is validated (1-10); default to 1 if missing
+		}
 		cartItem.setPrice(cartItem.getProduct().getPrice()*cartItem.getQuantity());
 		cartItem.setDiscountedPrice(cartItem.getProduct().getDiscountedPrice()*cartItem.getQuantity());
 		
@@ -73,7 +76,6 @@ public class CartItemServiceImplementation implements CartItemService {
 	@Override
 	public void removeCartItem(Long userId,Long cartItemId) throws CartItemException, UserException {
 		
-		System.out.println("userId- "+userId+" cartItemId "+cartItemId);
 		
 		CartItem cartItem=findCartItemById(cartItemId);
 		
@@ -96,7 +98,7 @@ public class CartItemServiceImplementation implements CartItemService {
 		if(opt.isPresent()) {
 			return opt.get();
 		}
-		throw new CartItemException("cartItem not found with id : "+cartItemId);
+		throw new CartItemNotFoundException("cartItem not found with id : "+cartItemId);
 	}
 
 }

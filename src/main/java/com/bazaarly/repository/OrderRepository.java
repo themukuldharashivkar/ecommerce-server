@@ -1,5 +1,9 @@
 package com.bazaarly.repository;
 
+import org.springframework.data.domain.Pageable;
+
+import org.springframework.data.domain.Page;
+
 import java.util.Optional;
 
 import org.springframework.data.jpa.repository.Lock;
@@ -21,5 +25,5 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 	Optional<Order> findByIdForUpdate(@Param("id") Long id);
 
 	@Query("SELECT o FROM Order o WHERE o.user.id = :userId AND (o.orderStatus = PLACED OR o.orderStatus = CONFIRMED OR o.orderStatus = SHIPPED OR o.orderStatus = DELIVERED)")
-	public List<Order> getUsersOrders(@Param("userId") Long userId);
+	public Page<Order> getUsersOrders(@Param("userId") Long userId, Pageable pageable);
 }

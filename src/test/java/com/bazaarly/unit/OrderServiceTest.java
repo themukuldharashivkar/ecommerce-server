@@ -17,6 +17,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.bazaarly.exception.OrderException;
+import com.bazaarly.exception.OrderNotFoundException;
+import com.bazaarly.request.ShippingAddressRequest;
 import com.bazaarly.modal.Address;
 import com.bazaarly.modal.Cart;
 import com.bazaarly.modal.CartItem;
@@ -66,7 +68,7 @@ class OrderServiceTest {
 	}
 
 	@Test
-	void createOrderCopiesTheCartIntoAPendingOrder() {
+	void createOrderCopiesTheCartIntoAPendingOrder() throws Exception {
 		User user = new User();
 		user.setId(1L);
 		Address address = new Address();
@@ -102,11 +104,64 @@ class OrderServiceTest {
 	}
 
 	@Test
+	void orderFromAnEmptyCartIsRejected() {
+		User user = new User();
+		user.setId(1L);
+		when(cartService.findUserCart(1L)).thenReturn(new Cart());
+
+		assertThatThrownBy(() -> service.createOrder(user, new Address()))
+				.isInstanceOf(OrderException.class).hasMessage("Your cart is empty");
+		verify(orderRepository, never()).save(any());
+		verify(addressRepository, never()).save(any());
+	}
+
+	@Test
+	void savedAddressOfTheCallerIsReusedWithoutSavingItAgain() throws Exception {
+		User user = new User();
+		user.setId(1L);
+		Address saved = new Address();
+		saved.setId(50L);
+		saved.setUser(user);
+		when(addressRepository.findById(50L)).thenReturn(Optional.of(saved));
+
+		Address resolved = service.resolveShippingAddress(user,
+				new ShippingAddressRequest(50L, null, null, null, null, null, null, null));
+
+		assertThat(resolved).isSameAs(saved);
+	}
+
+	@Test
+	void anotherUsersSavedAddressCannotBeUsed() {
+		User me = new User();
+		me.setId(1L);
+		User other = new User();
+		other.setId(2L);
+		Address theirs = new Address();
+		theirs.setId(60L);
+		theirs.setUser(other);
+		when(addressRepository.findById(60L)).thenReturn(Optional.of(theirs));
+
+		assertThatThrownBy(() -> service.resolveShippingAddress(me,
+				new ShippingAddressRequest(60L, null, null, null, null, null, null, null)))
+				.isInstanceOf(OrderException.class).hasMessage("Saved address not found");
+	}
+
+	@Test
+	void newAddressIsBuiltFromTheTrimmedRequest() throws Exception {
+		Address address = service.resolveShippingAddress(new User(),
+				new ShippingAddressRequest(null, " Asha ", "Rao", "12 MG Road", "Pune", "MH", "411001", "9876543210"));
+
+		assertThat(address.getId()).isNull();
+		assertThat(address.getFirstName()).isEqualTo("Asha");
+		assertThat(address.getZipCode()).isEqualTo("411001");
+	}
+
+	@Test
 	void findOrderByIdOfAnUnknownOrderFails() {
 		when(orderRepository.findById(9L)).thenReturn(Optional.empty());
 
 		assertThatThrownBy(() -> service.findOrderById(9L))
-				.isInstanceOf(OrderException.class)
+				.isInstanceOf(OrderNotFoundException.class)
 				.hasMessage("order not exist with id 9");
 	}
 

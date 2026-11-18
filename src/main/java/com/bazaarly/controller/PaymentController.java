@@ -1,5 +1,9 @@
 package com.bazaarly.controller;
 
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import com.bazaarly.config.OpenApiConfig;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,6 +23,8 @@ import com.bazaarly.service.UserService;
 import com.razorpay.RazorpayException;
 
 @RestController
+@Tag(name = "Payments")
+@SecurityRequirement(name = OpenApiConfig.BEARER)
 @RequestMapping("/api")
 public class PaymentController {
 

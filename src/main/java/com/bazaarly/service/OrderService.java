@@ -1,5 +1,11 @@
 package com.bazaarly.service;
 
+import org.springframework.data.domain.Pageable;
+
+import org.springframework.data.domain.Page;
+
+import com.bazaarly.request.ShippingAddressRequest;
+
 import java.util.List;
 
 import com.bazaarly.exception.OrderException;
@@ -9,11 +15,14 @@ import com.bazaarly.modal.User;
 
 public interface OrderService {
 	
-	public Order createOrder(User user, Address shippingAdress);
+	public Order createOrder(User user, Address shippingAdress) throws OrderException;
+
+	/** The caller's saved address (when an id is given) or a new, unsaved address built from the request. */
+	public Address resolveShippingAddress(User user, ShippingAddressRequest req) throws OrderException;
 	
 	public Order findOrderById(Long orderId) throws OrderException;
 	
-	public List<Order> usersOrderHistory(Long userId);
+	public Page<Order> usersOrderHistory(Long userId, Pageable pageable);
 	
 	public Order placedOrder(Long orderId) throws OrderException;
 	
@@ -25,7 +34,7 @@ public interface OrderService {
 	
 	public Order cancledOrder(Long orderId) throws OrderException;
 	
-	public List<Order>getAllOrders();
+	public Page<Order> getAllOrders(Pageable pageable);
 	
 	public void deleteOrder(Long orderId) throws OrderException;
 	

@@ -1,5 +1,9 @@
 package com.bazaarly.service;
 
+import org.springframework.data.domain.Pageable;
+
+import org.springframework.data.domain.Page;
+
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Caching;
 import com.bazaarly.cache.CacheNames;
@@ -48,9 +52,9 @@ public class ReviewServiceImplementation implements ReviewService {
 	}
 
 	@Override
-	public List<Review> getAllReview(Long productId) {
+	public Page<Review> getAllReview(Long productId, Pageable pageable) {
 		
-		return reviewRepository.getAllProductsReview(productId);
+		return reviewRepository.getAllProductsReview(productId, pageable);
 	}
 
 }

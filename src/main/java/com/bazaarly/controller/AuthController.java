@@ -1,5 +1,9 @@
 package com.bazaarly.controller;
 
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import com.bazaarly.config.OpenApiConfig;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -22,6 +26,7 @@ import com.bazaarly.modal.User;
 import com.bazaarly.user.domain.UserRole;
 import com.bazaarly.repository.UserRepository;
 import com.bazaarly.request.LoginRequest;
+import com.bazaarly.request.SignupRequest;
 import com.bazaarly.response.AuthResponse;
 import com.bazaarly.service.CartService;
 import com.bazaarly.service.CustomUserDetails;
@@ -29,6 +34,7 @@ import com.bazaarly.service.CustomUserDetails;
 import jakarta.validation.Valid;
 
 @RestController
+@Tag(name = "Auth")
 @RequestMapping("/auth")
 public class AuthController {
 
@@ -47,18 +53,18 @@ public class AuthController {
 	}
 	
 	@PostMapping("/signup")
-	public ResponseEntity<AuthResponse> createUserHandler(@Valid @RequestBody User user) throws UserException{
+	public ResponseEntity<AuthResponse> createUserHandler(@Valid @RequestBody SignupRequest user) throws UserException{
 		
-		  	String email = user.getEmail();
-	        String password = user.getPassword();
-	        String firstName=user.getFirstName();
-	        String lastName=user.getLastName();
+		  	// emails are compared case-insensitively: store them lower-cased
+		  	String email = user.email().trim().toLowerCase(java.util.Locale.ROOT);
+	        String password = user.password();
+	        String firstName=user.firstName().trim();
+	        String lastName=user.lastName().trim();
 	        
 	        User isEmailExist=userRepository.findByEmail(email);
 
 	        // Check if user with the given email already exists
 	        if (isEmailExist!=null) {
-	        // System.out.println("--------- exist "+isEmailExist).getEmail());
 	        	
 	            throw new UserException("Email Is Already Used With Another Account");
 	        }
@@ -91,8 +97,8 @@ public class AuthController {
 	}
 	
 	@PostMapping("/signin")
-    public ResponseEntity<AuthResponse> signin(@RequestBody LoginRequest loginRequest) {
-        String username = loginRequest.getEmail();
+    public ResponseEntity<AuthResponse> signin(@Valid @RequestBody LoginRequest loginRequest) {
+        String username = loginRequest.getEmail().trim().toLowerCase(java.util.Locale.ROOT);
         String password = loginRequest.getPassword();
         
         Authentication authentication = authenticate(username, password);

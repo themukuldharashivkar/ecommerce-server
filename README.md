@@ -20,6 +20,9 @@ cp .env.example .env     # set DB_PASSWORD, ADMIN_EMAIL/ADMIN_PASSWORD, Razorpay
 
 On first start Flyway creates the schema, the 499 demo products are loaded, and the admin account from `ADMIN_EMAIL`/`ADMIN_PASSWORD` is created.
 
+- API docs: http://localhost:5454/swagger-ui.html (sign in with `POST /auth/signin`, then **Authorize** with the `jwt` value)
+- Health: http://localhost:5454/actuator/health
+
 ## Tests
 
 ```bash
@@ -31,7 +34,7 @@ Needs Docker running: integration tests start a throwaway PostgreSQL 16 containe
 | Suite | Where | What |
 |---|---|---|
 | Unit (JUnit 5 + Mockito) | `src/test/java/com/bazaarly/unit` | cart, cart items, orders, payment creation and confirmation, product filtering and search, JWT, roles, admin bootstrap |
-| Integration (Testcontainers) | `src/test/java/com/bazaarly/integration` | signup/signin and JWT access (valid, expired, forged, malformed), admin-only endpoints (normal user gets 403), cart → order → payment flow, catalog and search queries on PostgreSQL, error response shape and status codes, Redis cache hits and evictions (real Redis container), async order-confirmation job: fast response, one email under retries and concurrency, retries after failures |
+| Integration (Testcontainers) | `src/test/java/com/bazaarly/integration` | signup/signin and JWT access (valid, expired, forged, malformed), admin-only endpoints (normal user gets 403), cart → order → payment flow, catalog and search queries on PostgreSQL, error response shape and status codes, Redis cache hits and evictions (real Redis container), async order-confirmation job: fast response, one email under retries and concurrency, retries after failures, request validation, pagination limits, rate limiting, health, OpenAPI and CORS |
 
 Coverage report (JaCoCo): `target/site/jacoco/index.html` after `mvnw verify`.
 

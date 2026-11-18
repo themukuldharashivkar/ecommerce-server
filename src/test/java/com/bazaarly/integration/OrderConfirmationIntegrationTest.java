@@ -260,7 +260,7 @@ class OrderConfirmationIntegrationTest extends IntegrationTest {
 		razorpayReportsCaptured(order);
 
 		confirm(order, newUserToken())
-				.andExpect(status().isBadRequest())
+				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.error").value("order not exist with id " + order.id()));
 
 		assertThat(orders.findById(order.id()).orElseThrow().getOrderStatus()).isEqualTo(OrderStatus.PENDING);
@@ -297,6 +297,6 @@ class OrderConfirmationIntegrationTest extends IntegrationTest {
 		PendingOrder order = pendingOrderWithLink();
 
 		mvc.perform(post("/api/payments/" + order.id()).header(HttpHeaders.AUTHORIZATION, bearer(newUserToken())))
-				.andExpect(status().isBadRequest());
+				.andExpect(status().isNotFound());
 	}
 }

@@ -1,5 +1,12 @@
 package com.bazaarly.request;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+
 import java.util.HashSet;
 import java.util.Set;
 
@@ -10,28 +17,48 @@ import com.bazaarly.user.domain.ProductSize;
 
 public class CreateProductRequest {
 	
+    @NotBlank(message = "Title is required")
+    @jakarta.validation.constraints.Size(max = 255)
     private String title;
 
+    @jakarta.validation.constraints.Size(max = 255)
     private String description;
 
+    @Min(value = 1, message = "Price must be at least 1")
     private int price;
 
+    @Min(value = 1, message = "Discounted price must be at least 1")
     private int discountedPrice;
    
+    @Min(0)
+    @Max(100)
     private int discountPersent;
 
+    @Min(value = 0, message = "Quantity cannot be negative")
     private int quantity;
 
+    @jakarta.validation.constraints.Size(max = 255)
     private String brand;
 
+    @jakarta.validation.constraints.Size(max = 255)
     private String color;
 
+    @Valid
     private Set<Size> size=new HashSet<>();
 
+    @NotBlank(message = "Image URL is required")
+    @jakarta.validation.constraints.Size(max = 255)
+    @Pattern(regexp = "https?://.+", message = "Image URL must start with http:// or https://")
     private String imageUrl;
 
+    @NotBlank(message = "Top-level category is required")
+    @jakarta.validation.constraints.Size(max = 50)
     private String topLavelCategory;
+    @NotBlank(message = "Second-level category is required")
+    @jakarta.validation.constraints.Size(max = 50)
     private String secondLavelCategory;
+    @NotBlank(message = "Third-level category is required")
+    @jakarta.validation.constraints.Size(max = 50)
     private String thirdLavelCategory;
 
 	public Set<Size> getSize() {
@@ -138,4 +165,10 @@ public class CreateProductRequest {
 	
     
     
+
+	@AssertTrue(message = "Discounted price cannot be higher than the price")
+	@com.fasterxml.jackson.annotation.JsonIgnore
+	public boolean isDiscountNotAbovePrice() {
+		return discountedPrice <= price;
+	}
 }

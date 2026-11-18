@@ -103,7 +103,7 @@ class AdminAccessIntegrationTest extends IntegrationTest {
 
 		mvc.perform(delete("/api/admin/products/" + productId + "/delete").header(HttpHeaders.AUTHORIZATION, bearer(admin)))
 				.andExpect(status().isAccepted());
-		mvc.perform(get("/api/products/id/" + productId)).andExpect(status().isBadRequest());
+		mvc.perform(get("/api/products/id/" + productId)).andExpect(status().isNotFound());
 	}
 
 	@Test

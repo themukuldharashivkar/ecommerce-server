@@ -1,5 +1,21 @@
 package com.bazaarly.controller;
 
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import com.bazaarly.config.OpenApiConfig;
+
+import org.springframework.web.bind.annotation.RequestParam;
+
+import jakarta.validation.constraints.Min;
+
+import jakarta.validation.constraints.Max;
+
+import org.springframework.validation.annotation.Validated;
+
+import org.springframework.data.domain.Sort;
+
+import org.springframework.data.domain.PageRequest;
+
 import java.util.List;
 
 import org.springframework.http.HttpStatus;
@@ -18,6 +34,9 @@ import com.bazaarly.response.ApiResponse;
 import com.bazaarly.service.OrderService;
 
 @RestController
+@Tag(name = "Admin: orders")
+@SecurityRequirement(name = OpenApiConfig.BEARER)
+@Validated
 @RequestMapping("/api/admin/orders")
 public class AdminOrderController {
 	
@@ -28,10 +47,9 @@ public class AdminOrderController {
 	}
 	
 	@GetMapping("/")
-	public ResponseEntity<List<Order>> getAllOrdersHandler(){
-		List<Order> orders=orderService.getAllOrders();
-		
-		return new ResponseEntity<>(orders,HttpStatus.ACCEPTED);
+	public ResponseEntity<List<Order>> getAllOrdersHandler(@RequestParam(defaultValue = "0") @Min(value = 0, message = "page must be 0 or more") int page,
+			@RequestParam(defaultValue = "50") @Min(value = 1, message = "size must be at least 1") @Max(value = 100, message = "size can be at most 100") int size){
+		return Paged.list(orderService.getAllOrders(PageRequest.of(page, size, Sort.by(Sort.Order.desc("id")))), HttpStatus.ACCEPTED);
 	}
 	
 	@PutMapping("/{orderId}/confirmed")
@@ -62,7 +80,6 @@ public class AdminOrderController {
 	public ResponseEntity<ApiResponse> deleteOrderHandler(@PathVariable Long orderId, @RequestHeader("Authorization") String jwt) throws OrderException{
 		orderService.deleteOrder(orderId);
 		ApiResponse res=new ApiResponse("Order Deleted Successfully",true);
-		System.out.println("delete method working....");
 		return new ResponseEntity<>(res,HttpStatus.ACCEPTED);
 	}
 

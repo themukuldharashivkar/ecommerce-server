@@ -1,5 +1,9 @@
 package com.bazaarly.repository;
 
+import org.springframework.data.domain.Pageable;
+
+import org.springframework.data.domain.Page;
+
 import java.util.List;
 
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -12,5 +16,5 @@ import com.bazaarly.modal.Review;
 public interface ReviewRepository extends JpaRepository<Review, Long> {
 
 	@Query("Select r from Review r where r.product.id=:productId")
-	public List<Review> getAllProductsReview(@Param("productId") Long productId);
+	public Page<Review> getAllProductsReview(@Param("productId") Long productId, Pageable pageable);
 }

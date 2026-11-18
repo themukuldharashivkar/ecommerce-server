@@ -1,5 +1,6 @@
 package com.bazaarly.payment;
 
+import com.bazaarly.exception.OrderNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -94,7 +95,7 @@ public class PaymentService {
 
 		if (!CAPTURED.equals(payment.status())) {
 			log.info("Payment {} for order {} not captured (status {})", paymentId, orderId, payment.status());
-			return placed();
+			return new ApiResponse("payment not completed yet", false);
 		}
 		if (order.getOrderId() == null || !order.getOrderId().equals(payment.providerOrderId())) {
 			log.warn("Payment {} belongs to provider order {}, not to order {} ({})", paymentId,
@@ -133,7 +134,7 @@ public class PaymentService {
 	private Order findOwnOrder(Long orderId, String callerEmail) throws OrderException {
 		Order order = orderService.findOrderById(orderId);
 		if (callerEmail == null || order.getUser() == null || !callerEmail.equals(order.getUser().getEmail())) {
-			throw new OrderException("order not exist with id " + orderId);
+			throw new OrderNotFoundException("order not exist with id " + orderId);
 		}
 		return order;
 	}

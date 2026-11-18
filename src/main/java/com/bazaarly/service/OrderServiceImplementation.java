@@ -1,5 +1,12 @@
 package com.bazaarly.service;
 
+import org.springframework.data.domain.Pageable;
+
+import org.springframework.data.domain.Page;
+
+import com.bazaarly.request.ShippingAddressRequest;
+
+import com.bazaarly.exception.OrderNotFoundException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -45,14 +52,23 @@ public class OrderServiceImplementation implements OrderService {
 	}
 
 	@Override
-	public Order createOrder(User user, Address shippAddress) {
-		
-		shippAddress.setUser(user);
-		Address address= addressRepository.save(shippAddress);
-		user.getAddresses().add(address);
-		userRepository.save(user);
+	public Order createOrder(User user, Address shippAddress) throws OrderException {
 		
 		Cart cart=cartService.findUserCart(user.getId());
+		if (cart.getCartItems().isEmpty()) {
+			throw new OrderException("Your cart is empty");
+		}
+
+		Address address;
+		if (shippAddress.getId() != null) {
+			address = shippAddress; // a saved address of this user, checked by resolveShippingAddress
+		} else {
+			shippAddress.setUser(user);
+			address = addressRepository.save(shippAddress);
+			user.getAddresses().add(address);
+			userRepository.save(user);
+		}
+
 		List<OrderItem> orderItems=new ArrayList<>();
 		
 		for(CartItem item: cart.getCartItems()) {
@@ -95,6 +111,25 @@ public class OrderServiceImplementation implements OrderService {
 		
 		return savedOrder;
 		
+	}
+
+	@Override
+	public Address resolveShippingAddress(User user, ShippingAddressRequest req) throws OrderException {
+		if (req.id() != null) {
+			// only the caller's own saved addresses can be reused
+			return addressRepository.findById(req.id())
+					.filter(a -> a.getUser() != null && a.getUser().getId().equals(user.getId()))
+					.orElseThrow(() -> new OrderException("Saved address not found"));
+		}
+		Address address = new Address();
+		address.setFirstName(req.firstName().trim());
+		address.setLastName(req.lastName().trim());
+		address.setStreetAddress(req.streetAddress().trim());
+		address.setCity(req.city().trim());
+		address.setState(req.state().trim());
+		address.setZipCode(req.zipCode().trim());
+		address.setMobile(req.mobile().trim());
+		return address;
 	}
 
 	@Override
@@ -142,19 +177,17 @@ public class OrderServiceImplementation implements OrderService {
 		if(opt.isPresent()) {
 			return opt.get();
 		}
-		throw new OrderException("order not exist with id "+orderId);
+		throw new OrderNotFoundException("order not exist with id "+orderId);
 	}
 
 	@Override
-	public List<Order> usersOrderHistory(Long userId) {
-		List<Order> orders=orderRepository.getUsersOrders(userId);
-		return orders;
+	public Page<Order> usersOrderHistory(Long userId, Pageable pageable) {
+		return orderRepository.getUsersOrders(userId, pageable);
 	}
 
 	@Override
-	public List<Order> getAllOrders() {
-		
-		return orderRepository.findAll();
+	public Page<Order> getAllOrders(Pageable pageable) {
+		return orderRepository.findAll(pageable);
 	}
 
 	@Override

@@ -1,5 +1,9 @@
 package com.bazaarly.service;
 
+import org.springframework.data.domain.Pageable;
+
+import org.springframework.data.domain.Page;
+
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Caching;
 import com.bazaarly.cache.CacheNames;
@@ -44,9 +48,9 @@ public class RatingServiceImplementation implements RatingServices{
 	}
 
 	@Override
-	public List<Rating> getProductsRating(Long productId) {
+	public Page<Rating> getProductsRating(Long productId, Pageable pageable) {
 		// TODO Auto-generated method stub
-		return ratingRepository.getAllProductsRating(productId);
+		return ratingRepository.getAllProductsRating(productId, pageable);
 	}
 	
 	

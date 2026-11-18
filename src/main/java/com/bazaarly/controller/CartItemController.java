@@ -1,5 +1,11 @@
 package com.bazaarly.controller;
 
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import com.bazaarly.config.OpenApiConfig;
+
+import jakarta.validation.Valid;
+import com.bazaarly.request.UpdateCartItemRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -19,6 +25,8 @@ import com.bazaarly.service.CartItemService;
 import com.bazaarly.service.UserService;
 
 @RestController
+@Tag(name = "Cart")
+@SecurityRequirement(name = OpenApiConfig.BEARER)
 @RequestMapping("/api/cart_items")
 public class CartItemController {
 
@@ -42,11 +50,13 @@ public class CartItemController {
 	}
 	
 	@PutMapping("/{cartItemId}")
-	public ResponseEntity<CartItem>updateCartItemHandler(@PathVariable Long cartItemId, @RequestBody CartItem cartItem, @RequestHeader("Authorization")String jwt) throws CartItemException, UserException{
+	public ResponseEntity<CartItem>updateCartItemHandler(@PathVariable Long cartItemId, @Valid @RequestBody UpdateCartItemRequest req, @RequestHeader("Authorization")String jwt) throws CartItemException, UserException{
 		
 		User user=userService.findUserProfileByJwt(jwt);
 		
-		CartItem updatedCartItem =cartItemService.updateCartItem(user.getId(), cartItemId, cartItem);
+		CartItem change = new CartItem();
+		change.setQuantity(req.quantity());
+		CartItem updatedCartItem =cartItemService.updateCartItem(user.getId(), cartItemId, change);
 		
 		//ApiResponse res=new ApiResponse("Item Updated",true);
 		

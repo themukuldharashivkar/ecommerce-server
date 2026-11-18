@@ -1,5 +1,6 @@
 package com.bazaarly.service;
 
+import com.bazaarly.exception.ProductNotFoundException;
 
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Caching;
@@ -20,7 +21,9 @@ import com.bazaarly.modal.Category;
 import com.bazaarly.modal.Product;
 import com.bazaarly.repository.CategoryRepository;
 import com.bazaarly.repository.ProductRepository;
+import com.bazaarly.repository.ProductSpecifications;
 import com.bazaarly.request.CreateProductRequest;
+import com.bazaarly.request.UpdateProductRequest;
 import com.bazaarly.user.domain.ProductSubCategory;
 
 @Service
@@ -93,7 +96,6 @@ public class ProductServiceImplementation implements ProductService {
 		
 		Product savedProduct= productRepository.save(product);
 		
-		System.out.println("products - "+product);
 		
 		return savedProduct;
 	}
@@ -105,7 +107,6 @@ public class ProductServiceImplementation implements ProductService {
 		
 		Product product=findProductById(productId);
 		
-		System.out.println("delete product "+product.getId()+" - "+productId);
 		product.getSizes().clear();
 //		productRepository.save(product);
 //		product.getCategory().
@@ -117,25 +118,21 @@ public class ProductServiceImplementation implements ProductService {
 	@Override
 	@Caching(evict = { @CacheEvict(cacheNames = CacheNames.CATALOG, allEntries = true),
 			@CacheEvict(cacheNames = CacheNames.PRODUCT, key = "#productId") })
-	public Product updateProduct(Long productId,Product req) throws ProductException {
+	public Product updateProduct(Long productId,UpdateProductRequest req) throws ProductException {
 		Product product=findProductById(productId);
-		
-		if(req.getQuantity()!=0) {
-			product.setQuantity(req.getQuantity());
+		// null means "leave unchanged"; 0 is a valid quantity (sold out)
+		if(req.quantity()!=null) {
+			product.setQuantity(req.quantity());
 		}
-		if(req.getDescription()!=null) {
-			product.setDescription(req.getDescription());
+		if(req.description()!=null) {
+			product.setDescription(req.description());
 		}
-		
-		
-			
-		
 		return productRepository.save(product);
 	}
 
 	@Override
-	public List<Product> getAllProducts() {
-		return productRepository.findAll();
+	public Page<Product> getAllProducts(Pageable pageable) {
+		return productRepository.findAll(pageable);
 	}
 
 	@Override
@@ -145,13 +142,12 @@ public class ProductServiceImplementation implements ProductService {
 		if(opt.isPresent()) {
 			return opt.get();
 		}
-		throw new ProductException("product not found with id "+id);
+		throw new ProductNotFoundException("product not found with id "+id);
 	}
 
 	@Override
 	public List<Product> findProductByCategory(String category) {
 		
-		System.out.println("category --- "+category);
 		
 		List<Product> products = productRepository.findByCategory(category);
 		
@@ -159,15 +155,14 @@ public class ProductServiceImplementation implements ProductService {
 	}
 
 	@Override
-	public List<Product> searchProduct(String query) {
+	public Page<Product> searchProduct(String query, Pageable pageable) {
 		// the query lower-cases the columns, so lower-case the term too (PostgreSQL LIKE is case-sensitive)
 		String term = query == null ? "" : query.toLowerCase();
 		List<Long> categoryIds = categoryRepository.findIdsByNameContaining(term);
 		if (categoryIds.isEmpty()) {
 			categoryIds = List.of(-1L); // keeps the IN clause valid; matches nothing
 		}
-		List<Product> products=productRepository.searchProduct(term, categoryIds);
-		return products;
+		return productRepository.searchProduct(term, categoryIds, pageable);
 	}
 
 
@@ -179,45 +174,10 @@ public class ProductServiceImplementation implements ProductService {
 			List<String> sizes, Integer minPrice, Integer maxPrice, 
 			Integer minDiscount,String sort, String stock, Integer pageNumber, Integer pageSize ) {
 
-		Pageable pageable = PageRequest.of(pageNumber, pageSize);
-		
-		List<Product> products = productRepository.filterProducts(category, minPrice, maxPrice, minDiscount, sort);
-		
-		
-		if (!colors.isEmpty()) {
-			products = products.stream()
-			        .filter(p -> colors.stream().anyMatch(c -> c.equalsIgnoreCase(p.getColor())))
-			        .collect(Collectors.toList());
-		
-		
-		} 
-
-		if (sizes != null && !sizes.isEmpty()) {
-			products = products.stream()
-					.filter(p -> p.getSizes().stream().anyMatch(sz -> sz.getQuantity() > 0
-							&& sizes.stream().anyMatch(s -> s.equalsIgnoreCase(sz.getName()))))
-					.collect(Collectors.toList());
-		}
-
-		if(stock!=null) {
-
-			if(stock.equals("in_stock")) {
-				products=products.stream().filter(p->p.getQuantity()>0).collect(Collectors.toList());
-			}
-			else if (stock.equals("out_of_stock")) {
-				products=products.stream().filter(p->p.getQuantity()<1).collect(Collectors.toList());				
-			}
-				
-					
-		}
-		int startIndex = (int) pageable.getOffset();
-		int endIndex = Math.min(startIndex + pageable.getPageSize(), products.size());
-
-		List<Product> pageContent = products.subList(startIndex, endIndex);
-		Page<Product> filteredProducts = new PageImpl<>(pageContent, pageable, products.size());
-	    return filteredProducts; // If color list is empty, do nothing and return all products
-		
-		
+		// filtering, sorting and paging all happen in the database
+		return productRepository.findAll(
+				ProductSpecifications.catalog(category, colors, sizes, minPrice, maxPrice, minDiscount, stock),
+				PageRequest.of(pageNumber, pageSize, ProductSpecifications.catalogSort(sort)));
 	}
 
 }

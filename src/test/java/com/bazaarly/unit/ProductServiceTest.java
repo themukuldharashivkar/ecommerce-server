@@ -3,30 +3,39 @@ package com.bazaarly.unit;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 
-import com.bazaarly.exception.ProductException;
+import com.bazaarly.exception.ProductNotFoundException;
 import com.bazaarly.modal.Product;
-import com.bazaarly.modal.Size;
 import com.bazaarly.repository.CategoryRepository;
 import com.bazaarly.repository.ProductRepository;
+import com.bazaarly.repository.ProductSpecifications;
+import com.bazaarly.request.UpdateProductRequest;
 import com.bazaarly.service.ProductServiceImplementation;
 import com.bazaarly.service.UserService;
 
+/**
+ * Catalog filtering itself runs in the database (ProductSpecifications) and is tested against PostgreSQL
+ * in ProductQueriesIntegrationTest. These tests cover what the service decides.
+ */
 @ExtendWith(MockitoExtension.class)
 class ProductServiceTest {
 
@@ -41,117 +50,86 @@ class ProductServiceTest {
 		service = new ProductServiceImplementation(productRepository, userService, categoryRepository);
 	}
 
-	private static Size size(String name, int quantity) {
-		Size size = new Size();
-		size.setName(name);
-		size.setQuantity(quantity);
-		return size;
-	}
-
-	private static Product product(long id, String color, int stock, Size... sizes) {
-		Product p = new Product();
-		p.setId(id);
-		p.setTitle("p" + id);
-		p.setColor(color);
-		p.setQuantity(stock);
-		p.setSizes(new java.util.HashSet<>(Set.of(sizes)));
-		return p;
-	}
-
-	private final List<Product> catalog = List.of(
-			product(1, "Red", 5, size("M", 2)),
-			product(2, "Blue", 0, size("M", 0), size("L", 1)),
-			product(3, "red", 3, size("S", 4)),
-			product(4, "Green", 1, size("L", 3)));
-
-	private Page<Product> filter(List<String> colors, List<String> sizes, String stock, int page, int pageSize) {
-		when(productRepository.filterProducts(anyString(), any(), any(), any(), anyString())).thenReturn(catalog);
-		return service.getAllProduct("cat", colors, sizes, 0, 100000, 0, "price_low", stock, page, pageSize);
-	}
-
-	private static List<Long> ids(Page<Product> page) {
-		return page.getContent().stream().map(Product::getId).toList();
+	@SuppressWarnings("unchecked")
+	private Pageable catalogPageRequestFor(String sort, int page, int size) {
+		when(productRepository.findAll(any(Specification.class), any(Pageable.class))).thenReturn(Page.empty());
+		service.getAllProduct("men_jeans", List.of(), List.of(), 0, 1000, 0, sort, "", page, size);
+		ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+		verify(productRepository).findAll(any(Specification.class), pageable.capture());
+		return pageable.getValue();
 	}
 
 	@Test
-	void noExtraFiltersReturnsEverythingTheQueryFound() {
-		assertThat(ids(filter(List.of(), List.of(), null, 0, 10))).containsExactly(1L, 2L, 3L, 4L);
+	void catalogIsPagedByTheDatabase() {
+		Pageable pageable = catalogPageRequestFor("price_low", 2, 12);
+		assertThat(pageable.getPageNumber()).isEqualTo(2);
+		assertThat(pageable.getPageSize()).isEqualTo(12);
 	}
 
 	@Test
-	void colourFilterIgnoresCase() {
-		assertThat(ids(filter(List.of("RED"), List.of(), null, 0, 10))).containsExactly(1L, 3L);
-		assertThat(ids(filter(List.of("red", "green"), List.of(), null, 0, 10))).containsExactly(1L, 3L, 4L);
+	void catalogSortsByShownPriceThenId() {
+		assertThat(catalogPageRequestFor("price_low", 0, 12).getSort())
+				.isEqualTo(Sort.by(Sort.Order.asc("discountedPrice"), Sort.Order.asc("id")));
 	}
 
 	@Test
-	void sizeFilterOnlyMatchesSizesInStock() {
-		// product 2 lists M but has none left
-		assertThat(ids(filter(List.of(), List.of("m"), null, 0, 10))).containsExactly(1L);
-		assertThat(ids(filter(List.of(), List.of("L"), null, 0, 10))).containsExactly(2L, 4L);
-	}
-
-	@Test
-	void stockFilter() {
-		assertThat(ids(filter(List.of(), List.of(), "in_stock", 0, 10))).containsExactly(1L, 3L, 4L);
-		assertThat(ids(filter(List.of(), List.of(), "out_of_stock", 0, 10))).containsExactly(2L);
-	}
-
-	@Test
-	void pagesTheFilteredList() {
-		Page<Product> first = filter(List.of(), List.of(), null, 0, 3);
-		assertThat(ids(first)).containsExactly(1L, 2L, 3L);
-		assertThat(first.getTotalElements()).isEqualTo(4);
-		assertThat(first.getTotalPages()).isEqualTo(2);
-
-		assertThat(ids(filter(List.of(), List.of(), null, 1, 3))).containsExactly(4L);
+	void catalogSortOptions() {
+		assertThat(ProductSpecifications.catalogSort("price_high"))
+				.isEqualTo(Sort.by(Sort.Order.desc("discountedPrice"), Sort.Order.asc("id")));
+		assertThat(ProductSpecifications.catalogSort("")).isEqualTo(Sort.by(Sort.Order.asc("id")));
+		assertThat(ProductSpecifications.catalogSort(null)).isEqualTo(Sort.by(Sort.Order.asc("id")));
 	}
 
 	@Test
 	void searchLowerCasesTheTermAndPassesMatchingCategoryIds() {
+		Pageable page = PageRequest.of(0, 20);
+		Product match = new Product();
 		when(categoryRepository.findIdsByNameContaining("jeans")).thenReturn(List.of(7L, 12L));
-		when(productRepository.searchProduct("jeans", List.of(7L, 12L))).thenReturn(List.of(catalog.get(0)));
+		when(productRepository.searchProduct("jeans", List.of(7L, 12L), page)).thenReturn(new PageImpl<>(List.of(match)));
 
-		assertThat(service.searchProduct("JeAnS")).hasSize(1);
+		assertThat(service.searchProduct("JeAnS", page).getContent()).containsExactly(match);
 	}
 
 	@Test
 	void searchWithNoMatchingCategoryStillProducesAValidQuery() {
+		Pageable page = PageRequest.of(0, 20);
 		when(categoryRepository.findIdsByNameContaining("silk")).thenReturn(List.of());
-		when(productRepository.searchProduct("silk", List.of(-1L))).thenReturn(List.of());
+		when(productRepository.searchProduct(eq("silk"), eq(List.of(-1L)), eq(page))).thenReturn(Page.empty());
 
-		assertThat(service.searchProduct("silk")).isEmpty();
-		verify(productRepository).searchProduct("silk", List.of(-1L));
+		assertThat(service.searchProduct("silk", page)).isEmpty();
 	}
 
 	@Test
-	void findProductByIdOfAnUnknownProductFails() {
+	void findProductByIdOfAnUnknownProductIsNotFound() {
 		when(productRepository.findById(99L)).thenReturn(Optional.empty());
 
 		assertThatThrownBy(() -> service.findProductById(99L))
-				.isInstanceOf(ProductException.class)
+				.isInstanceOf(ProductNotFoundException.class)
 				.hasMessage("product not found with id 99");
 	}
 
 	@Test
 	void updateProductOnlyChangesProvidedFields() throws Exception {
-		Product existing = product(5, "Red", 4, size("M", 1));
+		Product existing = new Product();
+		existing.setQuantity(4);
 		existing.setDescription("old");
 		when(productRepository.findById(5L)).thenReturn(Optional.of(existing));
 		when(productRepository.save(existing)).thenReturn(existing);
-		Product change = new Product();
-		change.setQuantity(9);
 
-		Product updated = service.updateProduct(5L, change);
+		Product updated = service.updateProduct(5L, new UpdateProductRequest(9, null));
 
 		assertThat(updated.getQuantity()).isEqualTo(9);
 		assertThat(updated.getDescription()).isEqualTo("old");
 	}
 
 	@Test
-	void minPriceAndDiscountArePassedToTheQuery() {
-		when(productRepository.filterProducts(anyString(), anyInt(), anyInt(), anyInt(), anyString())).thenReturn(List.of());
-		service.getAllProduct("men_jeans", List.of(), List.of(), 500, 1000, 20, "price_high", null, 0, 10);
-		verify(productRepository).filterProducts("men_jeans", 500, 1000, 20, "price_high");
+	void updateProductCanMarkAProductSoldOut() throws Exception {
+		Product existing = new Product();
+		existing.setQuantity(4);
+		when(productRepository.findById(5L)).thenReturn(Optional.of(existing));
+		when(productRepository.save(existing)).thenReturn(existing);
+
+		// previously a quantity of 0 was treated as "not provided"
+		assertThat(service.updateProduct(5L, new UpdateProductRequest(0, null)).getQuantity()).isZero();
 	}
 }

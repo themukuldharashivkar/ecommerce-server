@@ -53,19 +53,38 @@ Signup always creates `ROLE_USER`. The only admin is the account named by `ADMIN
 | Controller | Method and path | Access |
 |---|---|---|
 | Home | `GET /` | public |
-| Auth | `POST /auth/signup`, `POST /auth/signin` | public |
-| User products | `GET /api/products` (filters: category, color, size, minPrice, maxPrice, minDiscount, sort, stock, pageNumber, pageSize; all required) | public |
-| | `GET /api/products/id/{productId}` | public |
-| | `GET /api/products/search?q=` | public |
+| Auth | `POST /auth/signup`, `POST /auth/signin` (rate limited per IP) | public |
+| Catalog | `GET /api/products` (all filters optional: category, color, size, minPrice, maxPrice, minDiscount, sort, stock; pageNumber, pageSize ≤ 50; returns a Page; cached) | public |
+| | `GET /api/products/id/{productId}` (cached) | public |
+| | `GET /api/products/search?q=` (page, size ≤ 50) | public |
 | User | `GET /api/users/profile` | logged in |
 | Cart | `GET /api/cart/`, `PUT /api/cart/add` | logged in |
-| Cart items | `PUT /api/cart_items/{id}`, `DELETE /api/cart_items/{id}` | logged in |
-| Orders | `POST /api/orders/`, `GET /api/orders/user`, `GET /api/orders/{orderId}` | logged in |
-| Payments | `POST /api/payments/{orderId}` (creates a Razorpay Payment Link), `GET /api/payments?payment_id=&order_id=` (confirms payment server-side) | logged in |
-| Reviews | `POST /api/reviews/create`, `GET /api/reviews/product/{productId}` | logged in |
-| Ratings | `POST /api/ratings/create`, `GET /api/ratings/product/{productId}` | logged in |
-| Admin products | `POST /api/admin/products/`, `POST /api/admin/products/creates`, `GET /api/admin/products/all`, `PUT /api/admin/products/{id}/update`, `DELETE /api/admin/products/{id}/delete` | `ROLE_ADMIN` |
-| Admin orders | `GET /api/admin/orders/`, `PUT /api/admin/orders/{id}/confirmed`, `.../ship`, `.../deliver`, `.../cancel`, `DELETE .../{id}/delete` | `ROLE_ADMIN` |
+| Cart items | `PUT /api/cart_items/{id}`, `DELETE /api/cart_items/{id}` | logged in, own items |
+| Orders | `POST /api/orders/`, `GET /api/orders/user` (page, size ≤ 100), `GET /api/orders/{orderId}` | logged in, own orders |
+| Payments | `POST /api/payments/{orderId}` (creates a Razorpay Payment Link), `GET /api/payments?payment_id=&order_id=` (confirms payment server-side) | logged in, own orders |
+| Reviews | `POST /api/reviews/create` (logged in), `GET /api/reviews/product/{productId}` (public; page, size ≤ 100) | |
+| Ratings | `POST /api/ratings/create` (logged in), `GET /api/ratings/product/{productId}` (public; page, size ≤ 100) | |
+| Admin products | `POST /api/admin/products/`, `POST /api/admin/products/creates` (≤ 100 per call), `GET /api/admin/products/all` (page, size ≤ 100), `PUT /api/admin/products/{id}/update`, `DELETE /api/admin/products/{id}/delete` | `ROLE_ADMIN` |
+| Admin orders | `GET /api/admin/orders/` (page, size ≤ 100), `PUT /api/admin/orders/{id}/confirmed`, `.../ship`, `.../deliver`, `.../cancel`, `DELETE .../{id}/delete` | `ROLE_ADMIN` |
+| Operations | `GET /actuator/health` (status only); Swagger UI at `/swagger-ui.html`, OpenAPI JSON at `/v3/api-docs` | public |
+
+List endpoints other than the catalog return a JSON array, with the total number of items in the `X-Total-Count` header (exposed to the browser through CORS). Lists are newest first, except the admin product list and search, which are ordered by id.
+
+### Errors and validation
+
+Every error has the same body: `{"error": "...", "details": "uri=/api/...", "timestamp": "...", "fieldErrors": {...}}`. `fieldErrors` only appears for validation errors.
+
+| Status | When |
+|---|---|
+| 400 | Validation failed (request DTOs use `jakarta.validation`), malformed JSON, missing or wrong-typed parameter, business rule (e.g. empty cart, email already used, payment does not match) |
+| 401 | No token or an invalid one; wrong email or password (same message for an unknown email) |
+| 403 | Valid token without the admin role on `/api/admin/**` |
+| 404 | Unknown product, order, cart item or route. Another user's order also gets 404, so ids cannot be probed. |
+| 405 / 415 | Wrong HTTP method or content type |
+| 429 | Rate limit on `/auth/signin` (10 per minute per IP) or `/auth/signup` (5 per 10 minutes per IP), with `Retry-After` |
+| 500 | Anything unexpected. The response gives a generic message; the details are only in the server log. |
+
+Signup takes a `SignupRequest` (first and last name, email, password) instead of the `User` entity. Passwords must be 8–72 characters with at least one letter and one number. Emails are stored lower-cased and compared case-insensitively.
 
 ### Caching
 
@@ -132,7 +151,7 @@ All environment-specific values come from environment variables. `.env.example` 
 
 All profiles run Flyway on startup and validate the schema.
 
-Variables: `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `MAIL_ENABLED`, `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM`, `CACHE_TYPE`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_SSL`, `CACHE_CATALOG_TTL`, `CACHE_PRODUCT_TTL`, `PORT`, `DB_URL` or `DB_HOST`/`DB_PORT`/`DB_NAME` (PostgreSQL, default `localhost:5432/ecommerce`), `DB_USERNAME`, `DB_PASSWORD`, `SEED_ENABLED`, `JWT_SECRET`, `JWT_EXPIRATION_MS`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `CORS_ALLOWED_ORIGINS` (comma-separated), `FRONTEND_URL` (Razorpay return URL).
+Variables: `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `RATE_LIMIT_SIGNIN_REQUESTS`, `RATE_LIMIT_SIGNIN_PERIOD`, `RATE_LIMIT_SIGNUP_REQUESTS`, `RATE_LIMIT_SIGNUP_PERIOD`, `FORWARD_HEADERS_STRATEGY` (prod default `framework`: client IP from `X-Forwarded-For`, so only use behind a proxy), `API_DOCS_ENABLED`, `MAIL_ENABLED`, `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM`, `CACHE_TYPE`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_SSL`, `CACHE_CATALOG_TTL`, `CACHE_PRODUCT_TTL`, `PORT`, `DB_URL` or `DB_HOST`/`DB_PORT`/`DB_NAME` (PostgreSQL, default `localhost:5432/ecommerce`), `DB_USERNAME`, `DB_PASSWORD`, `SEED_ENABLED`, `JWT_SECRET`, `JWT_EXPIRATION_MS`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `CORS_ALLOWED_ORIGINS` (comma-separated), `FRONTEND_URL` (Razorpay return URL).
 
 The frontend reads `REACT_APP_API_URL`, falling back to `http://localhost:5454` in development and the Railway URL in production builds (`src/config/api.js`).
 
@@ -167,15 +186,15 @@ npm start                   # http://localhost:3000
 
 Run with `./mvnw verify` (needs Docker; integration tests use a Testcontainers PostgreSQL 16 and the real Flyway migrations). Razorpay is mocked at the `PaymentGateway` interface and never called.
 
-Measured on 2026-11-18 (`./mvnw clean verify`, 15 s on an Apple M5):
+Measured on 2026-11-18 (`./mvnw clean verify`, 19 s on an Apple M5):
 
 | | Count |
 |---|---|
-| Unit tests (JUnit 5 + Mockito) | 66 |
-| Integration tests (Spring Boot + Testcontainers PostgreSQL; caching tests also use a Redis container) | 58 |
-| **Total** | **124, all passing** |
+| Unit tests (JUnit 5 + Mockito) | 69 |
+| Integration tests (Spring Boot + Testcontainers PostgreSQL; caching tests also use a Redis container) | 91 |
+| **Total** | **160, all passing** |
 
-JaCoCo line coverage: service layer (`service` + `payment` packages) **88.1%** (339/385 lines); `service` alone 95.1%. `payment` is 68.3% because `RazorpayPaymentGateway`, the thin wrapper around the Razorpay SDK, is deliberately not exercised. `notification` 83.5% (the SMTP sender is exercised by hand with Mailpit, not in tests). `cache` 74.5% (the Redis-failure fallback was checked by hand). Whole codebase 77.6% of lines.
+JaCoCo line coverage: service layer (`service` + `payment` packages) **87.8%** (330/376 lines); `service` alone 94.9%. `payment` is 68.3% because `RazorpayPaymentGateway`, the thin wrapper around the Razorpay SDK, is deliberately not exercised. Whole codebase 79.4% of lines, 60.1% of branches.
 
 To check that the tests catch real regressions, bugs were planted temporarily: removing the admin role rule failed 2 tests, marking uncaptured payments as paid failed 2 tests, removing the cache eviction on product update failed 1 test, running the confirmation job synchronously (no `@Async`) failed 1 test, and removing the idempotency guards failed 2 tests (duplicate emails).
 
@@ -221,19 +240,32 @@ A 32-check smoke test of the API (catalog, search, auth, cart, order, Razorpay l
 - Any captured Razorpay payment id could mark **any** order as paid, and anyone could confirm or create a payment link for another user's order. Confirmation now checks the caller, the Razorpay order and the amount; link creation checks the caller and refuses already-paid orders.
 - Confirming the same payment twice (the payment-success page runs its effect twice under React `StrictMode`) could process it twice; it is now idempotent.
 
+### Fixed in Step 5 (hardening)
+
+- **Any logged-in user could read any order** (`GET /api/orders/{id}`), including the address. Only the buyer can now (others get 404).
+- **A user could take over another user's saved address** by sending its id at checkout. Saved addresses can now only be reused by their owner.
+- Client errors (malformed JSON, missing or wrong-typed parameters) returned 500. They are now 400/404/405/415, and 401/403 responses have JSON bodies.
+- 500 responses echoed internal exception messages. They now return a generic message and log the details.
+- Validation on all request bodies. Input longer than a database column now gets a clean 400 instead of a database error.
+- Rate limiting on signin and signup (Bucket4j, per client IP, in memory).
+- HTTP Basic, the generated `/login` form page and logout endpoint are removed. CORS is limited to the configured origins, methods and headers.
+- All `System.out.println` debugging is removed; several of these printed user emails.
+- The catalog filters, sorts and pages in the database (10.8–32.9× faster uncached at 100k products, [PERFORMANCE.md](PERFORMANCE.md#3-catalog-filtering-and-paging-in-the-database-upgrade-step-5-measured-2026-11-18)). Every list endpoint is paged with a maximum size.
+- Catalog filters are optional, and reviews/ratings reads are public (product detail already showed them).
+- Adding an item with quantity 3 stored quantity 1; the requested quantity (1–10) is now kept.
+- An admin can set a product's quantity to 0 (before, 0 meant "unchanged").
+- Orders from an empty cart are rejected.
+- An uncaptured payment now gets "payment not completed yet" with `status: false`, instead of "your order got placed".
+- `/actuator/health` (status only, everything else in Actuator unexposed) and Swagger UI with bearer auth.
+
 ### Known issues, not yet fixed
 
 | Issue | Planned in |
 |---|---|
 | Old secrets (Razorpay test key and secret, DB password, JWT secret) are still in git history and on GitHub. They should be rotated. | Step 10 |
-| `GET /api/orders/{id}` does not check that the order belongs to the caller (any logged-in user can read any order, including its address). | Step 5 |
-| A payment that is not (yet) captured still gets the response "your order got placed" (unchanged; the order correctly stays `PENDING`). | Step 5 |
-| Adding an item with quantity > 1 stores quantity 1 (`CartItemServiceImplementation.createCartItem` overrides it). | Step 5 |
-| Client errors without a dedicated handler (missing query parameter, malformed JSON, wrong type) return 500 instead of 400. | Step 5 |
-| The catalog endpoint requires every filter parameter (400 if one is missing). It also loads every product in the category, then filters colour/size/stock and pages in Java. | Step 5 |
-| Search is not paged and returns every match. | Step 5 |
 | The live Railway deployment still runs the MySQL build; moving it to PostgreSQL means a new database (existing live users and orders are not migrated). | Step 8 |
-| Reviews and ratings `GET` endpoints require login, although product detail (which includes them) is public. | Step 5 |
-| No validation on most request DTOs. Error responses use a single generic shape. | Step 5 |
-| Many `System.out.println` calls instead of a logger. | Step 5 |
-| `spring.security` HTTP Basic and form login are still enabled alongside JWT. | Step 5 |
+| Rate limits are per instance (in memory). With several instances each enforces its own limit. | if scaled out |
+| The cart is not emptied after an order is placed. | open |
+| Placing an order does not reserve or reduce stock. | open |
+| Admin "list all orders" and the user's order history return the first 50 by default; the frontend does not request further pages yet. | open |
+| `Product.sizes` is a `HashSet` of a class without `equals`/`hashCode`, so the order of sizes in uncached responses can change between requests. | open |

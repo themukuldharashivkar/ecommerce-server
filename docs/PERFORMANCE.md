@@ -4,6 +4,7 @@ Every number here comes from a real run. Each section states how it was measured
 
 1. [Database indexes](#1-database-indexes-flyway-v2__indexessql-measured-2026-11-17)
 2. [Redis cache for the catalog endpoints](#2-redis-cache-for-the-catalog-endpoints-upgrade-step-3-measured-2026-11-18)
+3. [Catalog filtering and paging in the database](#3-catalog-filtering-and-paging-in-the-database-upgrade-step-5-measured-2026-11-18)
 
 ## 1. Database indexes (Flyway `V2__indexes.sql`), measured 2026-11-17
 
@@ -58,8 +59,8 @@ End to end, the search change (rewritten query plus indexes) went from **76.40 �
 
 ### Limits
 
-- **The API does more than this query.** `GET /api/products` loads every product matching the category and price, then filters colour, size and stock in Java, then pages the list in memory. It also loads each product's sizes, ratings and reviews one product at a time. At 100k products that Java work will outweigh the SQL time above. Moving filtering and paging into the database is part of the pagination work (upgrade Step 5).
-- **Search has no paging.** Search returns every match: 23,718 products for `jeans` in the benchmark data, 118 in the real catalog.
+- **The API used to do more than this query.** At the time, `GET /api/products` loaded every product matching the category and price, then filtered and paged in Java. Since Step 5 the database does the filtering and paging ([section 3](#3-catalog-filtering-and-paging-in-the-database-upgrade-step-5-measured-2026-11-18)), so the catalog SQL is now a different query (with `LIMIT` and a count). The indexes measured here still serve it.
+- **Search had no paging** when this was measured: it returned every match (23,718 products for `jeans` in the benchmark data). Since Step 5 it returns 20 per page (at most 50), with the total in `X-Total-Count`.
 - **Numbers are from one laptop.** They are useful as a before/after comparison on the same machine, not as absolute production latencies.
 
 ### Reproduce
@@ -146,3 +147,33 @@ scripts/benchmark/cache_bench.sh no-cache http://localhost:5454 <product id>
 SPRING_PROFILES_ACTIVE=prod CACHE_TYPE=redis java -jar target/e-commerce-0.0.1-SNAPSHOT.jar &
 scripts/benchmark/cache_bench.sh redis http://localhost:5454 <product id>
 ```
+
+## 3. Catalog filtering and paging in the database (upgrade Step 5), measured 2026-11-18
+
+### What changed
+
+Before, `GET /api/products` worked like this:
+1. load every product matching the category and price range
+2. filter colour, size and stock in Java, loading each product's sizes one product at a time
+3. cut out the requested page in memory
+
+Now all filters, the sort, `LIMIT`/`OFFSET` and the total count run in PostgreSQL (a JPA `Specification`). Lazy collections load in batches of 50 (`hibernate.default_batch_fetch_size`).
+
+### How it was measured
+
+- Data: a copy of the dev database plus `scripts/benchmark/generate_products.sql`, giving **100,299 products** (synthetic data, see section 1)
+- Cache: off (`CACHE_TYPE=none`), so every request hits the database. With the Redis cache on, repeated requests are served from Redis (section 2).
+- Code: two jars built from this repository, run one after the other with the same settings (`prod` profile, `-Xmx1g`, OpenJDK 21, PostgreSQL 16, Apple M5):
+  - **before**: the Step 4 commit `3a40548`
+  - **after**: the Step 5 code
+- Load: ApacheBench, concurrency 1, 10 warm-up requests, then 3 runs of 50 requests. The table shows the median of the 3 runs. 0 failed requests.
+- Both versions returned the same `totalElements` and the same first products for both requests.
+
+| Request (`category=men_jeans`, 12 per page, sort `price_low`) | Matching products | Before p50 / p95 | After p50 / p95 | p50 speed-up |
+|---|---|---|---|---|
+| No other filters | 15,678 | 68.13 / 80.60 ms | 6.30 / 9.63 ms | 10.8× |
+| `color=Black,Blue&size=M,L&minPrice=300&maxPrice=1500&minDiscount=20&stock=in_stock` | 6,776 | 756.79 / 844.99 ms | 23.03 / 26.76 ms | 32.9× |
+
+The filtered request gained the most. To apply the size filter, the old code loaded the sizes of every candidate product, one query per product. Now that check is an `EXISTS` subquery.
+
+On the real 499-product catalog the same requests return the same products in the same order as before the change. This was checked against responses captured before Step 3; the only differences were reviews and ratings added by test runs in between.

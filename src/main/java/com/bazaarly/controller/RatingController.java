@@ -1,7 +1,24 @@
 package com.bazaarly.controller;
 
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import com.bazaarly.config.OpenApiConfig;
+
+import org.springframework.web.bind.annotation.RequestParam;
+
+import jakarta.validation.constraints.Min;
+
+import jakarta.validation.constraints.Max;
+
+import org.springframework.validation.annotation.Validated;
+
+import org.springframework.data.domain.Sort;
+
+import org.springframework.data.domain.PageRequest;
+
 import java.util.List;
 
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,6 +39,8 @@ import com.bazaarly.service.RatingServices;
 import com.bazaarly.service.UserService;
 
 @RestController
+@Tag(name = "Ratings")
+@Validated
 @RequestMapping("/api/ratings")
 public class RatingController {
 	
@@ -34,17 +53,18 @@ public class RatingController {
 		// TODO Auto-generated constructor stub
 	}
 
+	@SecurityRequirement(name = OpenApiConfig.BEARER)
 	@PostMapping("/create")
-	public ResponseEntity<Rating> createRatingHandler(@RequestBody RatingRequest req,@RequestHeader("Authorization") String jwt) throws UserException, ProductException{
+	public ResponseEntity<Rating> createRatingHandler(@Valid @RequestBody RatingRequest req,@RequestHeader("Authorization") String jwt) throws UserException, ProductException{
 		User user=userService.findUserProfileByJwt(jwt);
 		Rating rating=ratingServices.createRating(req, user);
 		return new ResponseEntity<>(rating,HttpStatus.ACCEPTED);
 	}
 	
 	@GetMapping("/product/{productId}")
-	public ResponseEntity<List<Rating>> getProductsReviewHandler(@PathVariable Long productId){
-	
-		List<Rating> ratings=ratingServices.getProductsRating(productId);
-		return new ResponseEntity<>(ratings,HttpStatus.OK);
+	public ResponseEntity<List<Rating>> getProductsReviewHandler(@PathVariable Long productId,
+			@RequestParam(defaultValue = "0") @Min(value = 0, message = "page must be 0 or more") int page,
+			@RequestParam(defaultValue = "20") @Min(value = 1, message = "size must be at least 1") @Max(value = 100, message = "size can be at most 100") int size){
+		return Paged.list(ratingServices.getProductsRating(productId, PageRequest.of(page, size, Sort.by(Sort.Order.desc("id")))), HttpStatus.OK);
 	}
 }

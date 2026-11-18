@@ -1,7 +1,25 @@
 package com.bazaarly.controller;
 
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import com.bazaarly.config.OpenApiConfig;
+
+import org.springframework.web.bind.annotation.RequestParam;
+
+import jakarta.validation.constraints.Min;
+
+import jakarta.validation.constraints.Max;
+
+import org.springframework.data.domain.Sort;
+
+import org.springframework.data.domain.PageRequest;
+
 import java.util.List;
 
+import jakarta.validation.Valid;
+import com.bazaarly.request.UpdateProductRequest;
+import jakarta.validation.constraints.Size;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -20,6 +38,9 @@ import com.bazaarly.response.ApiResponse;
 import com.bazaarly.service.ProductService;
 
 @RestController
+@Tag(name = "Admin: products")
+@SecurityRequirement(name = OpenApiConfig.BEARER)
+@Validated // validates the elements of the bulk-create list
 @RequestMapping("/api/admin/products")
 public class AdminProductController {
 	
@@ -30,7 +51,7 @@ public class AdminProductController {
 	}
 	
 	@PostMapping("/")
-	public ResponseEntity<Product> createProductHandler(@RequestBody CreateProductRequest req) throws ProductException{
+	public ResponseEntity<Product> createProductHandler(@Valid @RequestBody CreateProductRequest req) throws ProductException{
 		
 		Product createdProduct = productService.createProduct(req);
 		
@@ -41,9 +62,7 @@ public class AdminProductController {
 	@DeleteMapping("/{productId}/delete")
 	public ResponseEntity<ApiResponse> deleteProductHandler(@PathVariable Long productId) throws ProductException{
 		
-		System.out.println("dlete product controller .... ");
 		String msg=productService.deleteProduct(productId);
-		System.out.println("dlete product controller .... msg "+msg);
 		ApiResponse res=new ApiResponse(msg,true);
 		
 		return new ResponseEntity<ApiResponse>(res,HttpStatus.ACCEPTED);
@@ -51,15 +70,13 @@ public class AdminProductController {
 	}
 	
 	@GetMapping("/all")
-	public ResponseEntity<List<Product>> findAllProduct(){
-		
-		List<Product> products = productService.getAllProducts();
-		
-		return new ResponseEntity<List<Product>>(products,HttpStatus.OK);
+	public ResponseEntity<List<Product>> findAllProduct(@RequestParam(defaultValue = "0") @Min(value = 0, message = "page must be 0 or more") int page,
+			@RequestParam(defaultValue = "50") @Min(value = 1, message = "size must be at least 1") @Max(value = 100, message = "size can be at most 100") int size){
+		return Paged.list(productService.getAllProducts(PageRequest.of(page, size, Sort.by("id"))), HttpStatus.OK);
 	}
 	
 	@PutMapping("/{productId}/update")
-	public ResponseEntity<Product> updateProductHandler(@RequestBody Product req,@PathVariable Long productId) throws ProductException{
+	public ResponseEntity<Product> updateProductHandler(@Valid @RequestBody UpdateProductRequest req,@PathVariable Long productId) throws ProductException{
 		
 		Product updatedProduct=productService.updateProduct(productId, req);
 		
@@ -67,7 +84,9 @@ public class AdminProductController {
 	}
 	
 	@PostMapping("/creates")
-	public ResponseEntity<ApiResponse> createMultipleProduct(@RequestBody CreateProductRequest[] reqs) throws ProductException{
+	public ResponseEntity<ApiResponse> createMultipleProduct(
+			@RequestBody @Size(min = 1, max = 100, message = "Send between 1 and 100 products") List<@Valid CreateProductRequest> reqs)
+			throws ProductException{
 		
 		for(CreateProductRequest product:reqs) {
 			productService.createProduct(product);

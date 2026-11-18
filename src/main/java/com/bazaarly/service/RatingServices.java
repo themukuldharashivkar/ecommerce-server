@@ -1,5 +1,9 @@
 package com.bazaarly.service;
 
+import org.springframework.data.domain.Pageable;
+
+import org.springframework.data.domain.Page;
+
 import java.util.List;
 
 import com.bazaarly.exception.ProductException;
@@ -11,6 +15,6 @@ public interface RatingServices {
 	
 	public Rating createRating(RatingRequest req,User user) throws ProductException;
 	
-	public List<Rating> getProductsRating(Long productId);
+	public Page<Rating> getProductsRating(Long productId, Pageable pageable);
 
 }

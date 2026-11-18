@@ -1,5 +1,10 @@
 package com.bazaarly.controller;
 
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import com.bazaarly.config.OpenApiConfig;
+
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,6 +25,8 @@ import com.bazaarly.service.CartService;
 import com.bazaarly.service.UserService;
 
 @RestController
+@Tag(name = "Cart")
+@SecurityRequirement(name = OpenApiConfig.BEARER)
 @RequestMapping("/api/cart")
 public class CartController {
 	
@@ -38,13 +45,12 @@ public class CartController {
 		
 		Cart cart=cartService.findUserCart(user.getId());
 		
-		System.out.println("cart - "+cart.getUser().getEmail());
 		
 		return new ResponseEntity<Cart>(cart,HttpStatus.OK);
 	}
 	
 	@PutMapping("/add")
-	public ResponseEntity<ApiResponse> addItemToCart(@RequestBody AddItemRequest req, @RequestHeader("Authorization") String jwt) throws UserException, ProductException{
+	public ResponseEntity<ApiResponse> addItemToCart(@Valid @RequestBody AddItemRequest req, @RequestHeader("Authorization") String jwt) throws UserException, ProductException{
 		
 		User user=userService.findUserProfileByJwt(jwt);
 		
