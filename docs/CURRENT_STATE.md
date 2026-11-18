@@ -118,9 +118,9 @@ Measured on 2026-11-17 (`./mvnw clean verify`, 12 s on an Apple M5):
 
 | | Count |
 |---|---|
-| Unit tests (JUnit 5 + Mockito) | 49 |
+| Unit tests (JUnit 5 + Mockito) | 50 |
 | Integration tests (Spring Boot + Testcontainers) | 39 |
-| **Total** | **88, all passing** |
+| **Total** | **89, all passing** |
 
 JaCoCo line coverage: service layer (`service` + `payment` packages) **87.1%** (303/348 lines); `service` alone 95.1%. `payment` is 51.6% because `RazorpayPaymentGateway`, the thin wrapper around the Razorpay SDK, is deliberately not exercised. Whole codebase 76.6% of lines, 48.2% of branches.
 
@@ -159,12 +159,15 @@ A 32-check smoke test of the API (catalog, search, auth, cart, order, Razorpay l
 - Signin with an unknown email now returns the same 401 as a wrong password, so it does not reveal which emails are registered.
 - Razorpay calls moved behind a `PaymentGateway` interface (`RazorpayPaymentGateway`), with the logic in `PaymentService`, so tests can mock the provider. Requests sent to Razorpay are unchanged.
 
+### Fixed after Step 2: payment amount
+
+- The Razorpay payment link charged `totalPrice` (the MRP) instead of `totalDiscountedPrice`, the total shown at checkout. It now charges the discounted total, sent as a whole number of paise; orders with nothing to pay are rejected before Razorpay is called. Verified against the Razorpay test API: an order with MRP ₹1,999 and discounted total ₹599 produced a link for 59,900 paise (₹599).
+
 ### Known issues, not yet fixed
 
 | Issue | Planned in |
 |---|---|
 | Old secrets (Razorpay test key and secret, DB password, JWT secret) are still in git history and on GitHub. They should be rotated. | Step 10 |
-| **The payment link charges `totalPrice` (MRP), not `totalDiscountedPrice`.** A ₹1000 item discounted to ₹700 asks for ₹1000. Left unchanged pending a decision. | open |
 | Payment confirmation does not check that the Razorpay payment belongs to the given order, or that the order belongs to the caller. | Step 4 |
 | `GET /api/orders/{id}` and `POST /api/payments/{orderId}` do not check that the order belongs to the caller (any logged-in user can read any order, including its address). | Step 5 |
 | Adding an item with quantity > 1 stores quantity 1 (`CartItemServiceImplementation.createCartItem` overrides it). | Step 5 |

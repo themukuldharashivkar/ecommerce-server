@@ -152,7 +152,7 @@ class CheckoutFlowIntegrationTest extends IntegrationTest {
 
 		ArgumentCaptor<PaymentGateway.PaymentLinkRequest> sent = ArgumentCaptor.forClass(PaymentGateway.PaymentLinkRequest.class);
 		verify(paymentGateway).createPaymentLink(sent.capture());
-		assertThat(sent.getValue().amountInPaise()).isEqualTo(100000.0); // totalPrice 1000 * 100
+		assertThat(sent.getValue().amountInPaise()).isEqualTo(70000L); // discounted total 700, not the 1000 MRP
 		assertThat(sent.getValue().callbackUrl()).isEqualTo("http://frontend.test/payment/" + orderId);
 		assertThat(orderRepository.findById(orderId).orElseThrow().getOrderId()).isEqualTo("order_test_1");
 	}

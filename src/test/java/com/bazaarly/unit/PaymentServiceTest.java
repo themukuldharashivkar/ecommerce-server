@@ -48,7 +48,8 @@ class PaymentServiceTest {
 		order = new Order();
 		order.setId(42L);
 		order.setUser(user);
-		order.setTotalPrice(1499);
+		order.setTotalPrice(1499);          // MRP
+		order.setTotalDiscountedPrice(1199); // what the shopper pays
 		order.setOrderStatus(OrderStatus.PENDING);
 		order.getPaymentDetails().setStatus(PaymentStatus.PENDING);
 	}
@@ -63,7 +64,7 @@ class PaymentServiceTest {
 
 		ArgumentCaptor<PaymentGateway.PaymentLinkRequest> sent = ArgumentCaptor.forClass(PaymentGateway.PaymentLinkRequest.class);
 		verify(gateway).createPaymentLink(sent.capture());
-		assertThat(sent.getValue().amountInPaise()).isEqualTo(149900.0);
+		assertThat(sent.getValue().amountInPaise()).isEqualTo(119900L); // discounted total, not the 1499 MRP
 		assertThat(sent.getValue().customerName()).isEqualTo("Asha Rao");
 		assertThat(sent.getValue().customerEmail()).isEqualTo("asha@example.com");
 		assertThat(sent.getValue().customerContact()).isEqualTo("9876543210");
@@ -73,6 +74,17 @@ class PaymentServiceTest {
 		assertThat(response.getPayment_link_id()).isEqualTo("plink_1");
 		assertThat(order.getOrderId()).isEqualTo("order_rzp_1");
 		verify(orderRepository).save(order);
+	}
+
+	@Test
+	void orderWithNothingToPayNeverCallsTheGateway() throws Exception {
+		order.setTotalDiscountedPrice(0);
+		when(orderService.findOrderById(42L)).thenReturn(order);
+
+		assertThatThrownBy(() -> service.createPaymentLink(42L))
+				.isInstanceOf(OrderException.class)
+				.hasMessage("order 42 has nothing to pay");
+		verifyNoInteractions(gateway);
 	}
 
 	@Test

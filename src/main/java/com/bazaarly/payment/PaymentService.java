@@ -39,9 +39,14 @@ public class PaymentService {
 	public PaymentLinkResponse createPaymentLink(Long orderId) throws OrderException, RazorpayException {
 		Order order = orderService.findOrderById(orderId);
 		User user = order.getUser();
+		// charge what the shopper sees at checkout: the total after discounts, in paise
+		Integer payable = order.getTotalDiscountedPrice();
+		if (payable == null || payable <= 0) {
+			throw new OrderException("order " + orderId + " has nothing to pay");
+		}
 
 		PaymentGateway.CreatedPaymentLink link = paymentGateway.createPaymentLink(new PaymentGateway.PaymentLinkRequest(
-				order.getTotalPrice() * 100,
+				payable * 100L,
 				user.getFirstName() + " " + user.getLastName(),
 				user.getMobile(),
 				user.getEmail(),

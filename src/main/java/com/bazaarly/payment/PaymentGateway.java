@@ -12,7 +12,7 @@ public interface PaymentGateway {
 	record CreatedPaymentLink(String id, String shortUrl, String providerOrderId) {
 	}
 
-	record PaymentLinkRequest(double amountInPaise, String customerName, String customerContact,
+	record PaymentLinkRequest(long amountInPaise, String customerName, String customerContact,
 			String customerEmail, String callbackUrl) {
 	}
 
