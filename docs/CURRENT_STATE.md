@@ -213,6 +213,23 @@ npm install
 npm start                   # http://localhost:3000
 ```
 
+## CI
+
+One GitHub Actions workflow per repository, on every push and pull request.
+
+| Repo | Jobs |
+|---|---|
+| `ecommerce-server` | **test**: Java 17 (Temurin) with Maven cache, `./mvnw -B verify` (unit and Testcontainers integration tests, JaCoCo), coverage report as an artifact. **docker**: builds the image after the tests pass; on `main` pushes it to `ghcr.io/<owner>/bazaarly-api` (`sha-...` and `latest`). |
+| `ecommerce-frontend` | **build**: Node 20 with npm cache, `npm ci`, `npm run lint` (fails on errors; 24 warnings are allowed for now), `npm run build`, build output as an artifact. **docker**: builds the nginx image; on `main` pushes `ghcr.io/<owner>/bazaarly-storefront`. |
+
+Checked locally on 2026-11-18:
+- `actionlint` reports no problems in either workflow (including `shellcheck` of the `run:` steps).
+- The workflow commands pass: `./mvnw -B -ntp verify` (187 tests) and `npm ci`, `npm run lint` and `npm run build` on a fresh clone.
+
+The workflows have **not run on GitHub yet**, because nothing has been pushed. The CI badges show no status until the first run on `main`.
+
+The frontend's only test (`src/App.test.js`, the Create React App boilerplate) fails as it is, so CI does not run frontend tests.
+
 ## Tests
 
 Run with `./mvnw verify` (needs Docker; integration tests use a Testcontainers PostgreSQL 16 and the real Flyway migrations). Razorpay is mocked at the `PaymentGateway` interface and never called.

@@ -1,5 +1,7 @@
 # Bazaarly API
 
+[![CI](https://github.com/themukuldharashivkar/ecommerce-server/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/themukuldharashivkar/ecommerce-server/actions/workflows/ci.yml)
+
 Spring Boot 3 REST API for the Bazaarly clothing store: catalog, cart, orders, Razorpay (test mode) payments, reviews and an admin panel.
 PostgreSQL with Flyway migrations, stateless JWT auth.
 
@@ -62,3 +64,10 @@ Needs Docker running: integration tests start a throwaway PostgreSQL 16 containe
 Coverage report (JaCoCo): `target/site/jacoco/index.html` after `mvnw verify`.
 
 Run one class: `./mvnw test -Dtest=CheckoutFlowIntegrationTest`.
+
+## CI
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push and pull request:
+
+1. **Build and test:** Java 17, Maven cache, `./mvnw verify` (all tests, including the Testcontainers ones, on the runner's Docker). The JaCoCo report is uploaded as an artifact, and the test reports too if something fails.
+2. **Docker image:** builds the `Dockerfile` with a layer cache. On pushes to `main` only, it pushes `ghcr.io/<owner>/bazaarly-api` tagged with the commit SHA and `latest`. Pull requests never push.
