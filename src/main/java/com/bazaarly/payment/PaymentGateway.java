@@ -12,8 +12,9 @@ public interface PaymentGateway {
 	record CreatedPaymentLink(String id, String shortUrl, String providerOrderId) {
 	}
 
+	/** expireBy: when the link stops accepting payments (Unix seconds; Razorpay needs at least 15 minutes ahead). */
 	record PaymentLinkRequest(long amountInPaise, String customerName, String customerContact,
-			String customerEmail, String callbackUrl) {
+			String customerEmail, String callbackUrl, long expireBy) {
 	}
 
 	CreatedPaymentLink createPaymentLink(PaymentLinkRequest request) throws RazorpayException;

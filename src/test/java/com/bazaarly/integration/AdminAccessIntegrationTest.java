@@ -65,10 +65,10 @@ class AdminAccessIntegrationTest extends IntegrationTest {
 			mvc.perform(request.header(HttpHeaders.AUTHORIZATION, bearer(userToken)))
 					.andExpect(status().isForbidden());
 		}
-		// nothing was changed by the rejected calls
+		// nothing was changed by the rejected calls (10 in stock, 1 reserved by the user's own order)
 		mvc.perform(get("/api/products/id/" + product.getId()))
 				.andExpect(status().isAccepted())
-				.andExpect(jsonPath("$.quantity").value(10));
+				.andExpect(jsonPath("$.quantity").value(9));
 		mvc.perform(get("/api/orders/" + orderId).header(HttpHeaders.AUTHORIZATION, bearer(userToken)))
 				.andExpect(status().isAccepted())
 				.andExpect(jsonPath("$.orderStatus").value("PENDING"));

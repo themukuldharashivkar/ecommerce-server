@@ -50,6 +50,8 @@ public class RazorpayPaymentGateway implements PaymentGateway {
 		paymentLinkRequest.put("reminder_enable", true);
 
 		paymentLinkRequest.put("callback_url", request.callbackUrl());
+		// the order's stock reservation ends then; an expired link cannot be paid
+		paymentLinkRequest.put("expire_by", request.expireBy());
 		paymentLinkRequest.put("callback_method", "get");
 
 		PaymentLink payment = razorpay.paymentLink.create(paymentLinkRequest);

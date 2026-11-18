@@ -1,5 +1,7 @@
 package com.bazaarly.service;
 
+import com.bazaarly.exception.ProductException;
+
 import com.bazaarly.exception.CartItemNotFoundException;
 import java.util.Optional;
 
@@ -20,8 +22,10 @@ public class CartItemServiceImplementation implements CartItemService {
 	private CartItemRepository cartItemRepository;
 	private UserService userService;
 	private CartRepository cartRepository;
+	private StockService stockService;
 	
-	public CartItemServiceImplementation(CartItemRepository cartItemRepository,UserService userService) {
+	public CartItemServiceImplementation(CartItemRepository cartItemRepository,UserService userService,StockService stockService) {
+		this.stockService=stockService;
 		this.cartItemRepository=cartItemRepository;
 		this.userService=userService;
 	}
@@ -48,7 +52,11 @@ public class CartItemServiceImplementation implements CartItemService {
 		
 		
 		if(user.getId().equals(userId)) {
-			
+			try {
+				stockService.checkAvailable(item.getProduct(), item.getSize(), cartItem.getQuantity());
+			} catch (ProductException e) {
+				throw new CartItemException(e.getMessage());
+			}
 			item.setQuantity(cartItem.getQuantity());
 			item.setPrice(item.getQuantity()*item.getProduct().getPrice());
 			item.setDiscountedPrice(item.getQuantity()*item.getProduct().getDiscountedPrice());

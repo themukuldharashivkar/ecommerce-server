@@ -16,10 +16,12 @@ public class CartServiceImplementation implements CartService{
 	private CartRepository cartRepository;
 	private CartItemService cartItemService;
 	private ProductService productService;
+	private StockService stockService;
 	
 	
 	public CartServiceImplementation(CartRepository cartRepository,CartItemService cartItemService,
-			ProductService productService) {
+			ProductService productService,StockService stockService) {
+		this.stockService=stockService;
 		this.cartRepository=cartRepository;
 		this.productService=productService;
 		this.cartItemService=cartItemService;
@@ -59,6 +61,8 @@ public class CartServiceImplementation implements CartService{
 	public String addCartItem(Long userId, AddItemRequest req) throws ProductException {
 		Cart cart=cartRepository.findByUserId(userId);
 		Product product=productService.findProductById(req.getProductId());
+		// the size must exist and have enough left (stock is reserved later, when the order is placed)
+		stockService.checkAvailable(product, req.getSize(), req.getQuantity());
 		
 		CartItem isPresent=cartItemService.isCartItemExist(cart, product, req.getSize(),userId);
 		

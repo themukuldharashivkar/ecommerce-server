@@ -1,5 +1,7 @@
 package com.bazaarly.service;
 
+import org.springframework.transaction.annotation.Transactional;
+
 import org.springframework.data.domain.Pageable;
 
 import org.springframework.data.domain.Page;
@@ -39,10 +41,12 @@ public class OrderServiceImplementation implements OrderService {
 	private UserRepository userRepository;
 	private OrderItemService orderItemService;
 	private OrderItemRepository orderItemRepository;
+	private StockService stockService;
 	
 	public OrderServiceImplementation(OrderRepository orderRepository,CartService cartService,
 			AddressRepository addressRepository,UserRepository userRepository,
-			OrderItemService orderItemService,OrderItemRepository orderItemRepository) {
+			OrderItemService orderItemService,OrderItemRepository orderItemRepository,StockService stockService) {
+		this.stockService=stockService;
 		this.orderRepository=orderRepository;
 		this.cartService=cartService;
 		this.addressRepository=addressRepository;
@@ -52,6 +56,8 @@ public class OrderServiceImplementation implements OrderService {
 	}
 
 	@Override
+	// one transaction: if any item is out of stock, nothing is reserved and no order or address is saved
+	@Transactional(rollbackFor = Exception.class)
 	public Order createOrder(User user, Address shippAddress) throws OrderException {
 		
 		Cart cart=cartService.findUserCart(user.getId());
@@ -86,6 +92,9 @@ public class OrderServiceImplementation implements OrderService {
 			
 			orderItems.add(createdOrderItem);
 		}
+
+		// reserve the stock now; released again if the order is cancelled or expires unpaid
+		stockService.reserve(orderItems);
 		
 		
 		Order createdOrder=new Order();
@@ -164,10 +173,34 @@ public class OrderServiceImplementation implements OrderService {
 	}
 
 	@Override
+	@Transactional(rollbackFor = Exception.class)
 	public Order cancledOrder(Long orderId) throws OrderException {
-		Order order=findOrderById(orderId);
+		Order order=orderRepository.findByIdForUpdate(orderId)
+				.orElseThrow(() -> new OrderNotFoundException("order not exist with id "+orderId));
+		if (order.getOrderStatus() == OrderStatus.CANCELLED) {
+			return order; // already cancelled: stock was given back then
+		}
+		if (order.getOrderStatus() == OrderStatus.SHIPPED || order.getOrderStatus() == OrderStatus.DELIVERED) {
+			throw new OrderException("Order " + orderId + " has already shipped and cannot be cancelled");
+		}
 		order.setOrderStatus(OrderStatus.CANCELLED);
+		stockService.release(order.getOrderItems());
 		return orderRepository.save(order);
+	}
+
+	@Override
+	@Transactional
+	public boolean expireIfUnpaid(Long orderId, LocalDateTime createdBefore) {
+		Order order = orderRepository.findByIdForUpdate(orderId).orElse(null);
+		if (order == null || order.getOrderStatus() != OrderStatus.PENDING
+				|| order.getPaymentDetails().getStatus() == PaymentStatus.COMPLETED
+				|| order.getCreatedAt() == null || !order.getCreatedAt().isBefore(createdBefore)) {
+			return false; // paid, already handled, or not old enough (re-checked under the row lock)
+		}
+		order.setOrderStatus(OrderStatus.CANCELLED);
+		stockService.release(order.getOrderItems());
+		orderRepository.save(order);
+		return true;
 	}
 
 	@Override
@@ -191,9 +224,14 @@ public class OrderServiceImplementation implements OrderService {
 	}
 
 	@Override
+	@Transactional(rollbackFor = Exception.class)
 	public void deleteOrder(Long orderId) throws OrderException {
 		Order order =findOrderById(orderId);
-		
+		// an order that still holds stock gives it back before it disappears
+		if (order.getOrderStatus() == OrderStatus.PENDING || order.getOrderStatus() == OrderStatus.PLACED
+				|| order.getOrderStatus() == OrderStatus.CONFIRMED) {
+			stockService.release(order.getOrderItems());
+		}
 		orderRepository.deleteById(orderId);
 		
 	}

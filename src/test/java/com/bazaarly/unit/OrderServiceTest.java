@@ -33,6 +33,7 @@ import com.bazaarly.repository.UserRepository;
 import com.bazaarly.service.CartService;
 import com.bazaarly.service.OrderItemService;
 import com.bazaarly.service.OrderServiceImplementation;
+import com.bazaarly.service.StockService;
 import com.bazaarly.user.domain.OrderStatus;
 import com.bazaarly.user.domain.PaymentStatus;
 
@@ -45,13 +46,14 @@ class OrderServiceTest {
 	@Mock UserRepository userRepository;
 	@Mock OrderItemService orderItemService;
 	@Mock OrderItemRepository orderItemRepository;
+	@Mock StockService stockService;
 
 	OrderServiceImplementation service;
 
 	@BeforeEach
 	void setUp() {
 		service = new OrderServiceImplementation(orderRepository, cartService, addressRepository, userRepository,
-				orderItemService, orderItemRepository);
+				orderItemService, orderItemRepository, stockService);
 	}
 
 	private static CartItem cartItem(String size, int quantity, int price, int discountedPrice) {
@@ -174,8 +176,47 @@ class OrderServiceTest {
 		assertThat(service.confirmedOrder(3L).getOrderStatus()).isEqualTo(OrderStatus.CONFIRMED);
 		assertThat(service.shippedOrder(3L).getOrderStatus()).isEqualTo(OrderStatus.SHIPPED);
 		assertThat(service.deliveredOrder(3L).getOrderStatus()).isEqualTo(OrderStatus.DELIVERED);
+		verify(orderRepository, times(3)).save(order);
+	}
+
+	@Test
+	void cancellingGivesTheStockBackOnce() throws Exception {
+		Order order = new Order();
+		order.setOrderStatus(OrderStatus.PLACED);
+		when(orderRepository.findByIdForUpdate(3L)).thenReturn(Optional.of(order));
+		when(orderRepository.save(order)).thenReturn(order);
+
 		assertThat(service.cancledOrder(3L).getOrderStatus()).isEqualTo(OrderStatus.CANCELLED);
-		verify(orderRepository, times(4)).save(order);
+		service.cancledOrder(3L); // second cancel: no second release
+
+		verify(stockService, times(1)).release(order.getOrderItems());
+	}
+
+	@Test
+	void shippedOrdersCannotBeCancelled() {
+		Order order = new Order();
+		order.setOrderStatus(OrderStatus.SHIPPED);
+		when(orderRepository.findByIdForUpdate(3L)).thenReturn(Optional.of(order));
+
+		assertThatThrownBy(() -> service.cancledOrder(3L)).isInstanceOf(OrderException.class)
+				.hasMessage("Order 3 has already shipped and cannot be cancelled");
+		verify(stockService, never()).release(any());
+	}
+
+	@Test
+	void placingAnOrderReservesItsItems() throws Exception {
+		User user = new User();
+		user.setId(1L);
+		Cart cart = new Cart();
+		cart.getCartItems().add(cartItem("M", 2, 2000, 1400));
+		when(cartService.findUserCart(1L)).thenReturn(cart);
+		when(addressRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(orderItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+		when(orderRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+		Order order = service.createOrder(user, new Address());
+
+		verify(stockService).reserve(order.getOrderItems());
 	}
 
 	@Test

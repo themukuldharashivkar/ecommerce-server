@@ -41,6 +41,7 @@ The schema is owned by Flyway (`src/main/resources/db/migration`); Hibernate run
 | `V1__init_schema.sql` | All tables, identity columns, sequences (allocation size 50) for `GenerationType.AUTO` ids, foreign keys. Enums are stored as names with `CHECK` constraints. |
 | `V2__indexes.sql` | Indexes on every foreign key, `(category_id, discounted_price)` for the catalog filter, `pg_trgm` trigram indexes for search, unique `users.email` and `cart.user_id`. |
 | `V3__order_notifications.sql` | `order_notification` outbox table, unique per (order, type). |
+| `V4__product_sizes_unique.sql` | Each product lists a size once (unique on product and lower-cased size name). |
 
 Enums (`UserRole`, `OrderStatus`, `PaymentMethod`, `PaymentStatus`) use `@Enumerated(EnumType.STRING)`, so reordering an enum can no longer corrupt stored data. Benchmarks are in [PERFORMANCE.md](PERFORMANCE.md).
 
@@ -104,6 +105,15 @@ Search (`/api/products/search`) is not cached. The plan also mentioned a categor
 
 Measurements are in [PERFORMANCE.md](PERFORMANCE.md#2-redis-cache-for-the-catalog-endpoints-upgrade-step-3-measured-2026-11-18): catalog p95 6.53 → 0.32 ms (concurrency 1) and 20.42 → 0.78 ms (concurrency 10).
 
+### Stock and the cart
+
+- **Placing an order reserves stock.** In the same transaction as the order, each item's quantity is taken from both the product total and the chosen size with a conditional `UPDATE ... WHERE quantity >= n`. The database therefore refuses to oversell, even when several orders for the last item arrive together (tested with 6 concurrent buyers: one succeeds). If any item is short, nothing is reserved and the shopper gets a 400 such as "Only 1 left of ... in size L".
+- **Adding to the cart** checks that the size exists and has enough left. Changing a cart line's quantity checks the same.
+- **Unpaid orders expire.** The Razorpay link expires `ORDER_RESERVATION_TTL` (default 60 min) after the order was placed. A job running every minute cancels unpaid orders 5 minutes after that and gives their stock back. A payment link is refused for an order with less than 16 minutes left (Razorpay's 15-minute minimum). A captured payment for an order that has already expired is refused with an error (logged for a manual refund), because its stock may have been sold again.
+- **Cancelling** (admin) gives the stock back once; shipped or delivered orders cannot be cancelled. Deleting an order that still holds stock also gives it back.
+- **The cart is emptied when the order is paid**, not when it is placed, so an abandoned payment does not lose the cart. Only the paid items are removed; anything added since stays.
+- Stock is part of the cached product JSON, so the product and catalog caches are evicted after each stock change commits.
+
 ### Payment confirmation and the order-confirmation job
 
 `GET /api/payments?payment_id=&order_id=` (called by the payment-success page) does this:
@@ -151,7 +161,7 @@ All environment-specific values come from environment variables. `.env.example` 
 
 All profiles run Flyway on startup and validate the schema.
 
-Variables: `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `RATE_LIMIT_SIGNIN_REQUESTS`, `RATE_LIMIT_SIGNIN_PERIOD`, `RATE_LIMIT_SIGNUP_REQUESTS`, `RATE_LIMIT_SIGNUP_PERIOD`, `FORWARD_HEADERS_STRATEGY` (prod default `framework`: client IP from `X-Forwarded-For`, so only use behind a proxy), `API_DOCS_ENABLED`, `MAIL_ENABLED`, `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM`, `CACHE_TYPE`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_SSL`, `CACHE_CATALOG_TTL`, `CACHE_PRODUCT_TTL`, `PORT`, `DB_URL` or `DB_HOST`/`DB_PORT`/`DB_NAME` (PostgreSQL, default `localhost:5432/ecommerce`), `DB_USERNAME`, `DB_PASSWORD`, `SEED_ENABLED`, `JWT_SECRET`, `JWT_EXPIRATION_MS`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `CORS_ALLOWED_ORIGINS` (comma-separated), `FRONTEND_URL` (Razorpay return URL).
+Variables: `ORDER_RESERVATION_TTL`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `RATE_LIMIT_SIGNIN_REQUESTS`, `RATE_LIMIT_SIGNIN_PERIOD`, `RATE_LIMIT_SIGNUP_REQUESTS`, `RATE_LIMIT_SIGNUP_PERIOD`, `FORWARD_HEADERS_STRATEGY` (prod default `framework`: client IP from `X-Forwarded-For`, so only use behind a proxy), `API_DOCS_ENABLED`, `MAIL_ENABLED`, `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM`, `CACHE_TYPE`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_SSL`, `CACHE_CATALOG_TTL`, `CACHE_PRODUCT_TTL`, `PORT`, `DB_URL` or `DB_HOST`/`DB_PORT`/`DB_NAME` (PostgreSQL, default `localhost:5432/ecommerce`), `DB_USERNAME`, `DB_PASSWORD`, `SEED_ENABLED`, `JWT_SECRET`, `JWT_EXPIRATION_MS`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `CORS_ALLOWED_ORIGINS` (comma-separated), `FRONTEND_URL` (Razorpay return URL).
 
 The frontend reads `REACT_APP_API_URL`, falling back to `http://localhost:5454` in development and the Railway URL in production builds (`src/config/api.js`).
 
@@ -190,13 +200,13 @@ Measured on 2026-11-18 (`./mvnw clean verify`, 19 s on an Apple M5):
 
 | | Count |
 |---|---|
-| Unit tests (JUnit 5 + Mockito) | 69 |
-| Integration tests (Spring Boot + Testcontainers PostgreSQL; caching tests also use a Redis container) | 91 |
-| **Total** | **160, all passing** |
+| Unit tests (JUnit 5 + Mockito) | 72 |
+| Integration tests (Spring Boot + Testcontainers PostgreSQL; caching tests also use a Redis container) | 105 |
+| **Total** | **177, all passing** |
 
-JaCoCo line coverage: service layer (`service` + `payment` packages) **87.8%** (330/376 lines); `service` alone 94.9%. `payment` is 68.3% because `RazorpayPaymentGateway`, the thin wrapper around the Razorpay SDK, is deliberately not exercised. Whole codebase 79.4% of lines, 60.1% of branches.
+JaCoCo line coverage: service layer (`service` + `payment` packages) **87.0%** (450/517 lines); `service` alone 92.4%. `payment` is lower because `RazorpayPaymentGateway`, the thin wrapper around the Razorpay SDK, is deliberately not exercised. Whole codebase 79.9% of lines, 60.3% of branches.
 
-To check that the tests catch real regressions, bugs were planted temporarily: removing the admin role rule failed 2 tests, marking uncaptured payments as paid failed 2 tests, removing the cache eviction on product update failed 1 test, running the confirmation job synchronously (no `@Async`) failed 1 test, and removing the idempotency guards failed 2 tests (duplicate emails).
+To check that the tests catch real regressions, bugs were planted temporarily: removing the admin role rule failed 2 tests, marking uncaptured payments as paid failed 2 tests, removing the cache eviction on product update failed 1 test, running the confirmation job synchronously (no `@Async`) failed 1 test, removing the idempotency guards failed 2 tests (duplicate emails), removing the `quantity >= n` stock guard failed 2 tests (overselling), removing `Size` equality failed 12 tests, and not clearing the cart on payment failed 1 test.
 
 ## Baseline check (2026-11-17)
 
@@ -258,6 +268,11 @@ A 32-check smoke test of the API (catalog, search, auth, cart, order, Razorpay l
 - An uncaptured payment now gets "payment not completed yet" with `status: false`, instead of "your order got placed".
 - `/actuator/health` (status only, everything else in Actuator unexposed) and Swagger UI with bearer auth.
 
+### Fixed after Step 5: stock and cart
+
+- Placing an order did not reduce stock; the cart was never emptied. See "Stock and the cart" above.
+- **Hibernate rewrote `product_sizes` on every flush of a loaded product.** `Size` (an `@ElementCollection` embeddable) had no `equals`/`hashCode`, so Hibernate saw the collection as changed and deleted and re-inserted its rows from memory. With stock now changed in SQL, this duplicated sizes and undid reservations. Fixed with value equality; V4 adds a unique index so the database rejects any duplicate. This also makes the order of sizes in responses stable.
+
 ### Known issues, not yet fixed
 
 | Issue | Planned in |
@@ -265,7 +280,5 @@ A 32-check smoke test of the API (catalog, search, auth, cart, order, Razorpay l
 | Old secrets (Razorpay test key and secret, DB password, JWT secret) are still in git history and on GitHub. They should be rotated. | Step 10 |
 | The live Railway deployment still runs the MySQL build; moving it to PostgreSQL means a new database (existing live users and orders are not migrated). | Step 8 |
 | Rate limits are per instance (in memory). With several instances each enforces its own limit. | if scaled out |
-| The cart is not emptied after an order is placed. | open |
-| Placing an order does not reserve or reduce stock. | open |
 | Admin "list all orders" and the user's order history return the first 50 by default; the frontend does not request further pages yet. | open |
-| `Product.sizes` is a `HashSet` of a class without `equals`/`hashCode`, so the order of sizes in uncached responses can change between requests. | open |
+| Cancelling a paid order does not refund it through Razorpay (test mode only). | open |

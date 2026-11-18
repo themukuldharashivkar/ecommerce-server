@@ -24,6 +24,11 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 	@Query("SELECT o FROM Order o WHERE o.id = :id")
 	Optional<Order> findByIdForUpdate(@Param("id") Long id);
 
+	/** Unpaid orders older than the cutoff (candidates for expiry; re-checked under a lock). */
+	@Query("SELECT o.id FROM Order o WHERE o.orderStatus = com.bazaarly.user.domain.OrderStatus.PENDING "
+			+ "AND o.paymentDetails.status = com.bazaarly.user.domain.PaymentStatus.PENDING AND o.createdAt < :cutoff")
+	List<Long> findUnpaidCreatedBefore(@Param("cutoff") java.time.LocalDateTime cutoff);
+
 	@Query("SELECT o FROM Order o WHERE o.user.id = :userId AND (o.orderStatus = PLACED OR o.orderStatus = CONFIRMED OR o.orderStatus = SHIPPED OR o.orderStatus = DELIVERED)")
 	public Page<Order> getUsersOrders(@Param("userId") Long userId, Pageable pageable);
 }

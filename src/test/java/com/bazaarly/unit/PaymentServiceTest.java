@@ -29,6 +29,7 @@ import com.bazaarly.notification.OrderPaidEvent;
 import com.bazaarly.payment.PaymentGateway;
 import com.bazaarly.payment.PaymentGateway.ProviderPayment;
 import com.bazaarly.payment.PaymentService;
+import com.bazaarly.repository.CartItemRepository;
 import com.bazaarly.repository.OrderRepository;
 import com.bazaarly.response.PaymentLinkResponse;
 import com.bazaarly.service.OrderService;
@@ -46,6 +47,9 @@ class PaymentServiceTest {
 	@Mock OrderRepository orderRepository;
 	@Mock OrderNotificationStore notificationStore;
 	@Mock ApplicationEventPublisher events;
+	@Mock CartItemRepository cartItemRepository;
+
+	static final java.time.Clock CLOCK = java.time.Clock.fixed(java.time.Instant.parse("2026-11-18T10:00:00Z"), java.time.ZoneOffset.UTC);
 
 	PaymentService service;
 	Order order;
@@ -55,7 +59,7 @@ class PaymentServiceTest {
 		// a TransactionTemplate over a mock manager just runs the callback
 		TransactionTemplate transaction = new TransactionTemplate(mock(PlatformTransactionManager.class));
 		service = new PaymentService(gateway, orderService, orderRepository, notificationStore, events, transaction,
-				"https://shop.example");
+				"https://shop.example", cartItemRepository, java.time.Duration.ofMinutes(60), CLOCK);
 		User user = new User();
 		user.setFirstName("Asha");
 		user.setLastName("Rao");
@@ -67,6 +71,7 @@ class PaymentServiceTest {
 		order.setTotalPrice(1499);          // MRP
 		order.setTotalDiscountedPrice(1199); // what the shopper pays
 		order.setOrderStatus(OrderStatus.PENDING);
+		order.setCreatedAt(java.time.LocalDateTime.now(CLOCK)); // placed just now
 		order.getPaymentDetails().setStatus(PaymentStatus.PENDING);
 	}
 

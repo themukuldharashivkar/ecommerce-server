@@ -19,6 +19,9 @@ public interface OrderService {
 
 	/** The caller's saved address (when an id is given) or a new, unsaved address built from the request. */
 	public Address resolveShippingAddress(User user, ShippingAddressRequest req) throws OrderException;
+
+	/** Cancels the order and gives its stock back if it is still unpaid and was created before the cutoff. */
+	public boolean expireIfUnpaid(Long orderId, java.time.LocalDateTime createdBefore);
 	
 	public Order findOrderById(Long orderId) throws OrderException;
 	

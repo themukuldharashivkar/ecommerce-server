@@ -24,6 +24,7 @@ import com.bazaarly.request.AddItemRequest;
 import com.bazaarly.service.CartItemService;
 import com.bazaarly.service.CartServiceImplementation;
 import com.bazaarly.service.ProductService;
+import com.bazaarly.service.StockService;
 
 @ExtendWith(MockitoExtension.class)
 class CartServiceTest {
@@ -31,13 +32,14 @@ class CartServiceTest {
 	@Mock CartRepository cartRepository;
 	@Mock CartItemService cartItemService;
 	@Mock ProductService productService;
+	@Mock StockService stockService;
 
 	CartServiceImplementation service;
 	Cart cart;
 
 	@BeforeEach
 	void setUp() {
-		service = new CartServiceImplementation(cartRepository, cartItemService, productService);
+		service = new CartServiceImplementation(cartRepository, cartItemService, productService, stockService);
 		cart = new Cart();
 	}
 

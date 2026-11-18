@@ -1,6 +1,10 @@
 package com.bazaarly.payment;
 
 import com.bazaarly.exception.OrderNotFoundException;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -10,9 +14,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import com.bazaarly.exception.OrderException;
 import com.bazaarly.modal.Order;
+import com.bazaarly.modal.OrderItem;
 import com.bazaarly.modal.User;
 import com.bazaarly.notification.OrderNotificationStore;
 import com.bazaarly.notification.OrderPaidEvent;
+import com.bazaarly.repository.CartItemRepository;
 import com.bazaarly.repository.OrderRepository;
 import com.bazaarly.response.ApiResponse;
 import com.bazaarly.response.PaymentLinkResponse;
@@ -35,10 +41,20 @@ public class PaymentService {
 	private final ApplicationEventPublisher events;
 	private final TransactionTemplate transaction;
 	private final String frontendUrl;
+	private final CartItemRepository cartItemRepository;
+	private final Duration reservationTtl;
+	private final Clock clock;
+
+	/** Razorpay rejects links that expire less than 15 minutes ahead; keep a minute of margin. */
+	static final Duration MIN_LINK_LIFETIME = Duration.ofMinutes(16);
 
 	public PaymentService(PaymentGateway paymentGateway, OrderService orderService, OrderRepository orderRepository,
 			OrderNotificationStore notificationStore, ApplicationEventPublisher events, TransactionTemplate transaction,
-			@Value("${app.frontend-url}") String frontendUrl) {
+			@Value("${app.frontend-url}") String frontendUrl, CartItemRepository cartItemRepository,
+			@Value("${app.orders.reservation-ttl}") Duration reservationTtl, Clock clock) {
+		this.cartItemRepository = cartItemRepository;
+		this.reservationTtl = reservationTtl;
+		this.clock = clock;
 		this.paymentGateway = paymentGateway;
 		this.orderService = orderService;
 		this.orderRepository = orderRepository;
@@ -53,6 +69,14 @@ public class PaymentService {
 		if (isPaid(order)) {
 			throw new OrderException("order " + orderId + " is already paid");
 		}
+		if (order.getOrderStatus() == OrderStatus.CANCELLED) {
+			throw new OrderException("This order was cancelled or has expired. Please place it again.");
+		}
+		// the link must expire when the stock reservation does, and Razorpay needs >= 15 minutes
+		Instant expiresAt = order.getCreatedAt().atZone(clock.getZone()).toInstant().plus(reservationTtl);
+		if (expiresAt.isBefore(clock.instant().plus(MIN_LINK_LIFETIME))) {
+			throw new OrderException("This order is about to expire. Please place it again.");
+		}
 		User user = order.getUser();
 		// charge what the shopper sees at checkout: the total after discounts, in paise
 		long payable = payableInPaise(order);
@@ -62,7 +86,8 @@ public class PaymentService {
 				user.getFirstName() + " " + user.getLastName(),
 				user.getMobile(),
 				user.getEmail(),
-				frontendUrl + "/payment/" + orderId));
+				frontendUrl + "/payment/" + orderId,
+				expiresAt.getEpochSecond()));
 
 		order.setOrderId(link.providerOrderId());
 		orderRepository.save(order);
@@ -108,26 +133,50 @@ public class PaymentService {
 			throw new OrderException("payment " + paymentId + " amount does not match order " + orderId);
 		}
 
-		transaction.executeWithoutResult(status -> markPaid(orderId, paymentId));
+		if (order.getOrderStatus() == OrderStatus.CANCELLED) {
+			return expiredButPaid(orderId, paymentId);
+		}
+		Boolean placedNow = transaction.execute(status -> markPaid(orderId, paymentId));
+		if (Boolean.FALSE.equals(placedNow)) {
+			return expiredButPaid(orderId, paymentId);
+		}
 		return placed();
 	}
 
-	/** Runs in one transaction with the order row locked; the outbox row and event commit together with it. */
-	private void markPaid(Long orderId, String paymentId) {
+	/** Expired orders have released their stock, so a payment that arrives afterwards cannot place them. */
+	private ApiResponse expiredButPaid(Long orderId, String paymentId) throws OrderException {
+		log.error("Captured payment {} for order {} that was already cancelled or expired: needs a refund", paymentId, orderId);
+		throw new OrderException("This order expired before the payment completed. Contact support for a refund.");
+	}
+
+	/**
+	 * Runs in one transaction with the order row locked; the outbox row, the event and the cart clean-up
+	 * commit together with it. Returns false if the order was cancelled or expired in the meantime.
+	 */
+	private boolean markPaid(Long orderId, String paymentId) {
 		Order locked = orderRepository.findByIdForUpdate(orderId).orElseThrow();
 		if (isPaid(locked)) {
 			log.info("Order {} was marked paid by a concurrent confirmation", orderId);
-			return;
+			return true;
+		}
+		if (locked.getOrderStatus() == OrderStatus.CANCELLED) {
+			return false;
 		}
 		locked.getPaymentDetails().setPaymentId(paymentId);
 		locked.getPaymentDetails().setStatus(PaymentStatus.COMPLETED);
 		locked.setOrderStatus(OrderStatus.PLACED);
 		orderRepository.save(locked);
 
+		// the paid items leave the cart; anything added after the order was placed stays
+		for (OrderItem item : locked.getOrderItems()) {
+			cartItemRepository.deleteLine(locked.getUser().getId(), item.getProduct().getId(), item.getSize());
+		}
+
 		if (notificationStore.createIfAbsent(orderId)) {
 			events.publishEvent(new OrderPaidEvent(orderId));
 		}
 		log.info("Payment {} captured, order {} placed", paymentId, orderId);
+		return true;
 	}
 
 	/** Unknown orders and other users' orders look the same, so ids cannot be probed. */

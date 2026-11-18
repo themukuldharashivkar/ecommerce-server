@@ -23,19 +23,21 @@ import com.bazaarly.modal.User;
 import com.bazaarly.repository.CartItemRepository;
 import com.bazaarly.service.CartItemServiceImplementation;
 import com.bazaarly.service.UserService;
+import com.bazaarly.service.StockService;
 
 @ExtendWith(MockitoExtension.class)
 class CartItemServiceTest {
 
 	@Mock CartItemRepository cartItemRepository;
 	@Mock UserService userService;
+	@Mock StockService stockService;
 
 	CartItemServiceImplementation service;
 	CartItem item;
 
 	@BeforeEach
 	void setUp() {
-		service = new CartItemServiceImplementation(cartItemRepository, userService);
+		service = new CartItemServiceImplementation(cartItemRepository, userService, stockService);
 		Product product = new Product();
 		product.setPrice(1000);
 		product.setDiscountedPrice(700);
