@@ -15,6 +15,7 @@ import com.bazaarly.exception.UserException;
 import com.bazaarly.payment.PaymentService;
 import com.bazaarly.response.ApiResponse;
 import com.bazaarly.response.PaymentLinkResponse;
+import com.bazaarly.service.UserService;
 import com.razorpay.RazorpayException;
 
 @RestController
@@ -22,21 +23,26 @@ import com.razorpay.RazorpayException;
 public class PaymentController {
 
 	private final PaymentService paymentService;
+	private final UserService userService;
 
-	public PaymentController(PaymentService paymentService) {
+	public PaymentController(PaymentService paymentService, UserService userService) {
 		this.paymentService = paymentService;
+		this.userService = userService;
 	}
 
 	@PostMapping("/payments/{orderId}")
 	public ResponseEntity<PaymentLinkResponse> createPaymentLink(@PathVariable Long orderId,
 			@RequestHeader("Authorization") String jwt) throws RazorpayException, UserException, OrderException {
-		return new ResponseEntity<>(paymentService.createPaymentLink(orderId), HttpStatus.ACCEPTED);
+		String caller = userService.findUserProfileByJwt(jwt).getEmail();
+		return new ResponseEntity<>(paymentService.createPaymentLink(orderId, caller), HttpStatus.ACCEPTED);
 	}
 
 	@GetMapping("/payments")
 	public ResponseEntity<ApiResponse> redirect(@RequestParam(name = "payment_id") String paymentId,
-			@RequestParam("order_id") Long orderId) throws RazorpayException, OrderException {
-		return new ResponseEntity<>(paymentService.confirmPayment(paymentId, orderId), HttpStatus.OK);
+			@RequestParam("order_id") Long orderId, @RequestHeader("Authorization") String jwt)
+			throws RazorpayException, OrderException, UserException {
+		String caller = userService.findUserProfileByJwt(jwt).getEmail();
+		return new ResponseEntity<>(paymentService.confirmPayment(paymentId, orderId, caller), HttpStatus.OK);
 	}
 
 }

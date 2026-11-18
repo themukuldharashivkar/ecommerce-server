@@ -20,6 +20,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 
 import com.bazaarly.modal.Product;
 import com.bazaarly.modal.Size;
+import com.bazaarly.notification.OrderConfirmationSender;
 import com.bazaarly.payment.PaymentGateway;
 import com.bazaarly.request.CreateProductRequest;
 import com.bazaarly.service.ProductService;
@@ -67,6 +68,10 @@ public abstract class IntegrationTest {
 
 	@MockBean
 	protected PaymentGateway paymentGateway;
+
+	/** Mocked so tests can see (and fail) deliveries; declared here so all tests share one Spring context. */
+	@MockBean
+	protected OrderConfirmationSender confirmationSender;
 
 	protected static String uniqueEmail(String prefix) {
 		return prefix + "-" + UUID.randomUUID() + "@test.local";

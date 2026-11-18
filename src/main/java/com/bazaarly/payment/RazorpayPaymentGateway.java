@@ -6,7 +6,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import com.razorpay.Payment;
 import com.razorpay.PaymentLink;
 import com.razorpay.RazorpayClient;
 import com.razorpay.RazorpayException;
@@ -66,8 +65,10 @@ public class RazorpayPaymentGateway implements PaymentGateway {
 	}
 
 	@Override
-	public String fetchPaymentStatus(String paymentId) throws RazorpayException {
-		Payment payment = client().payments.fetch(paymentId);
-		return payment.get("status");
+	public ProviderPayment fetchPayment(String paymentId) throws RazorpayException {
+		JSONObject payment = client().payments.fetch(paymentId).toJson();
+		// optString/optLong: order_id can be JSON null for payments not made through an order
+		return new ProviderPayment(payment.optString("status", null), payment.optString("order_id", null),
+				payment.optLong("amount", -1));
 	}
 }

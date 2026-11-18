@@ -59,6 +59,14 @@ class CheckoutFlowIntegrationTest extends IntegrationTest {
 				.andReturn().getResponse().getContentAsString());
 	}
 
+	/** Creates the payment link (mocked gateway); its provider order id is what payments are checked against. */
+	private void createPaymentLink(String token, long orderId) throws Exception {
+		when(paymentGateway.createPaymentLink(any()))
+				.thenReturn(new PaymentGateway.CreatedPaymentLink("plink_" + orderId, "https://rzp.io/" + orderId, "order_rzp_" + orderId));
+		mvc.perform(post("/api/payments/" + orderId).header(HttpHeaders.AUTHORIZATION, bearer(token)))
+				.andExpect(status().isAccepted());
+	}
+
 	@Test
 	void cartTotalsFollowTheItemsInIt() throws Exception {
 		String token = newUserToken();
@@ -162,7 +170,9 @@ class CheckoutFlowIntegrationTest extends IntegrationTest {
 		String token = newUserToken();
 		addToCart(token, createProduct("checkout_shirt", 1000, 700, "Blue", "M"), "M");
 		long orderId = createOrder(token).get("id").asLong();
-		when(paymentGateway.fetchPaymentStatus("pay_captured_1")).thenReturn("captured");
+		createPaymentLink(token, orderId);
+		when(paymentGateway.fetchPayment("pay_captured_1"))
+				.thenReturn(new PaymentGateway.ProviderPayment("captured", "order_rzp_" + orderId, 70000));
 
 		mvc.perform(get("/api/payments").param("payment_id", "pay_captured_1").param("order_id", String.valueOf(orderId))
 						.header(HttpHeaders.AUTHORIZATION, bearer(token)))
@@ -185,7 +195,9 @@ class CheckoutFlowIntegrationTest extends IntegrationTest {
 		String token = newUserToken();
 		addToCart(token, createProduct("checkout_shirt", 1000, 700, "Blue", "M"), "M");
 		long orderId = createOrder(token).get("id").asLong();
-		when(paymentGateway.fetchPaymentStatus("pay_failed_1")).thenReturn("failed");
+		createPaymentLink(token, orderId);
+		when(paymentGateway.fetchPayment("pay_failed_1"))
+				.thenReturn(new PaymentGateway.ProviderPayment("failed", "order_rzp_" + orderId, 70000));
 
 		mvc.perform(get("/api/payments").param("payment_id", "pay_failed_1").param("order_id", String.valueOf(orderId))
 						.header(HttpHeaders.AUTHORIZATION, bearer(token)))
@@ -203,7 +215,7 @@ class CheckoutFlowIntegrationTest extends IntegrationTest {
 		String token = newUserToken();
 		addToCart(token, createProduct("checkout_shirt", 1000, 700, "Blue", "M"), "M");
 		long orderId = createOrder(token).get("id").asLong();
-		when(paymentGateway.fetchPaymentStatus(eq("pay_boom"))).thenThrow(new RazorpayException("gateway down"));
+		when(paymentGateway.fetchPayment(eq("pay_boom"))).thenThrow(new RazorpayException("gateway down"));
 
 		mvc.perform(get("/api/payments").param("payment_id", "pay_boom").param("order_id", String.valueOf(orderId))
 						.header(HttpHeaders.AUTHORIZATION, bearer(token)))

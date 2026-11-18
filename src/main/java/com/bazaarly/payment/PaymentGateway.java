@@ -18,6 +18,12 @@ public interface PaymentGateway {
 
 	CreatedPaymentLink createPaymentLink(PaymentLinkRequest request) throws RazorpayException;
 
-	/** Provider status of a payment, e.g. "captured", "failed". */
-	String fetchPaymentStatus(String paymentId) throws RazorpayException;
+	/**
+	 * A payment as the provider reports it: status (e.g. "captured", "failed"), the provider order it
+	 * belongs to (for payment links, the order id stored when the link was created) and the amount.
+	 */
+	record ProviderPayment(String status, String providerOrderId, long amountInPaise) {
+	}
+
+	ProviderPayment fetchPayment(String paymentId) throws RazorpayException;
 }

@@ -19,6 +19,7 @@ There are two separate git repositories:
 | `config` | Security filter chain and CORS (`AppConfig`), JWT creation and validation, `DataSeeder`, `AdminBootstrap` |
 | `cache` | Response cache for the public catalog endpoints (`ProductResponseCache`, `CacheConfig`) |
 | `payment` | `PaymentService`, `PaymentGateway` interface and its Razorpay implementation |
+| `notification` | Order-confirmation outbox and background job (`OrderConfirmationJob`, `OrderNotificationStore`, SMTP or logging sender) |
 | `controller` | 12 REST controllers |
 | `service` | Interface + implementation per domain (user, product, cart, cart item, order, order item, rating, review, category) |
 | `repository` | 10 Spring Data JPA repositories |
@@ -39,6 +40,7 @@ The schema is owned by Flyway (`src/main/resources/db/migration`); Hibernate run
 |---|---|
 | `V1__init_schema.sql` | All tables, identity columns, sequences (allocation size 50) for `GenerationType.AUTO` ids, foreign keys. Enums are stored as names with `CHECK` constraints. |
 | `V2__indexes.sql` | Indexes on every foreign key, `(category_id, discounted_price)` for the catalog filter, `pg_trgm` trigram indexes for search, unique `users.email` and `cart.user_id`. |
+| `V3__order_notifications.sql` | `order_notification` outbox table, unique per (order, type). |
 
 Enums (`UserRole`, `OrderStatus`, `PaymentMethod`, `PaymentStatus`) use `@Enumerated(EnumType.STRING)`, so reordering an enum can no longer corrupt stored data. Benchmarks are in [PERFORMANCE.md](PERFORMANCE.md).
 
@@ -83,6 +85,37 @@ Search (`/api/products/search`) is not cached. The plan also mentioned a categor
 
 Measurements are in [PERFORMANCE.md](PERFORMANCE.md#2-redis-cache-for-the-catalog-endpoints-upgrade-step-3-measured-2026-11-18): catalog p95 6.53 → 0.32 ms (concurrency 1) and 20.42 → 0.78 ms (concurrency 10).
 
+### Payment confirmation and the order-confirmation job
+
+`GET /api/payments?payment_id=&order_id=` (called by the payment-success page) does this:
+
+1. Checks that the order belongs to the caller. Another user's order gets the same 400 as an unknown order.
+2. If the order is already paid, it returns straight away (a no-op).
+3. Fetches the payment from Razorpay and only accepts it if it is `captured`, belongs to this order's Razorpay order (stored when the link was created), and is for the full discounted amount.
+4. In one transaction, with the order row locked (`SELECT ... FOR UPDATE`), it re-checks that the order is unpaid, marks it `PLACED`/`COMPLETED`, and inserts an `order_notification` row (`ON CONFLICT DO NOTHING`).
+5. After the transaction commits, `OrderConfirmationJob` runs on a bounded pool (2 threads, queue of 100) and sends the email, so the HTTP response does not wait for it.
+
+The job claims the row (`PENDING`/`FAILED` → `SENDING`) with a conditional `UPDATE`, then marks it `SENT` or `FAILED` (recording the error).
+A scheduled sweeper (every 30 s) does three things:
+- retries `FAILED` rows with linear backoff (attempts × 1 min), up to 5 attempts
+- sends `PENDING` rows that no job picked up within 2 minutes (app restart, full queue)
+- releases rows stuck in `SENDING` for 10 minutes
+
+| Guarantee | How |
+|---|---|
+| A retried or concurrent confirmation sends one email | already-paid short-circuit, row lock and re-check, unique outbox row, conditional claim |
+| Payment confirmed but email intent lost | impossible: the outbox row commits with the payment |
+| Mail server down | row `FAILED` with the error, retried automatically |
+| Worker crashes after sending but before marking `SENT` | the email can be sent again after the 10-minute timeout (at-least-once in that case only) |
+
+Mail: `MAIL_ENABLED=true` sends over SMTP (`MAIL_HOST`/`MAIL_PORT`; Mailpit locally); otherwise the confirmation is only logged. Mailpit is used instead of MailHog, which is unmaintained and has no ARM image.
+
+Verified by hand with Mailpit:
+- real SMTP delivery of the email, sent once
+- with Mailpit stopped, the row went `FAILED` (3 attempts, error recorded) and was delivered once Mailpit was back (attempt 4, one email)
+
+A real Razorpay test payment needs the hosted checkout in a browser, so the full redirect → confirm → email path was tested with the gateway mocked (`OrderConfirmationIntegrationTest`).
+
 ### Seed data
 
 `DataSeeder` loads `src/main/resources/seed/products.json` (499 products) on startup when the product table is empty. It goes through `ProductService`, so categories are created the same way as from the admin panel. Turn it off with `SEED_ENABLED=false` (the `test` profile does).
@@ -99,7 +132,7 @@ All environment-specific values come from environment variables. `.env.example` 
 
 All profiles run Flyway on startup and validate the schema.
 
-Variables: `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `CACHE_TYPE`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_SSL`, `CACHE_CATALOG_TTL`, `CACHE_PRODUCT_TTL`, `PORT`, `DB_URL` or `DB_HOST`/`DB_PORT`/`DB_NAME` (PostgreSQL, default `localhost:5432/ecommerce`), `DB_USERNAME`, `DB_PASSWORD`, `SEED_ENABLED`, `JWT_SECRET`, `JWT_EXPIRATION_MS`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `CORS_ALLOWED_ORIGINS` (comma-separated), `FRONTEND_URL` (Razorpay return URL).
+Variables: `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `MAIL_ENABLED`, `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM`, `CACHE_TYPE`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_SSL`, `CACHE_CATALOG_TTL`, `CACHE_PRODUCT_TTL`, `PORT`, `DB_URL` or `DB_HOST`/`DB_PORT`/`DB_NAME` (PostgreSQL, default `localhost:5432/ecommerce`), `DB_USERNAME`, `DB_PASSWORD`, `SEED_ENABLED`, `JWT_SECRET`, `JWT_EXPIRATION_MS`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `CORS_ALLOWED_ORIGINS` (comma-separated), `FRONTEND_URL` (Razorpay return URL).
 
 The frontend reads `REACT_APP_API_URL`, falling back to `http://localhost:5454` in development and the Railway URL in production builds (`src/config/api.js`).
 
@@ -134,17 +167,17 @@ npm start                   # http://localhost:3000
 
 Run with `./mvnw verify` (needs Docker; integration tests use a Testcontainers PostgreSQL 16 and the real Flyway migrations). Razorpay is mocked at the `PaymentGateway` interface and never called.
 
-Measured on 2026-11-18 (`./mvnw clean verify`, 12 s on an Apple M5):
+Measured on 2026-11-18 (`./mvnw clean verify`, 15 s on an Apple M5):
 
 | | Count |
 |---|---|
-| Unit tests (JUnit 5 + Mockito) | 54 |
-| Integration tests (Spring Boot + Testcontainers PostgreSQL; caching tests also use a Redis container) | 47 |
-| **Total** | **101, all passing** |
+| Unit tests (JUnit 5 + Mockito) | 66 |
+| Integration tests (Spring Boot + Testcontainers PostgreSQL; caching tests also use a Redis container) | 58 |
+| **Total** | **124, all passing** |
 
-JaCoCo line coverage: service layer (`service` + `payment` packages) **87.2%** (306/351 lines); `service` alone 95.1%. `payment` is lower because `RazorpayPaymentGateway`, the thin wrapper around the Razorpay SDK, is deliberately not exercised. `cache` is 74.5%: the Redis-failure fallback was checked by hand (stopping Redis under a running app), not by an automated test. Whole codebase 76.5% of lines.
+JaCoCo line coverage: service layer (`service` + `payment` packages) **88.1%** (339/385 lines); `service` alone 95.1%. `payment` is 68.3% because `RazorpayPaymentGateway`, the thin wrapper around the Razorpay SDK, is deliberately not exercised. `notification` 83.5% (the SMTP sender is exercised by hand with Mailpit, not in tests). `cache` 74.5% (the Redis-failure fallback was checked by hand). Whole codebase 77.6% of lines.
 
-To check that the tests catch real regressions, bugs were planted temporarily: removing the admin role rule failed 2 tests, marking uncaptured payments as paid failed 2 tests, and removing the cache eviction on product update failed 1 test.
+To check that the tests catch real regressions, bugs were planted temporarily: removing the admin role rule failed 2 tests, marking uncaptured payments as paid failed 2 tests, removing the cache eviction on product update failed 1 test, running the confirmation job synchronously (no `@Async`) failed 1 test, and removing the idempotency guards failed 2 tests (duplicate emails).
 
 ## Baseline check (2026-11-17)
 
@@ -183,13 +216,18 @@ A 32-check smoke test of the API (catalog, search, auth, cart, order, Razorpay l
 
 - The Razorpay payment link charged `totalPrice` (the MRP) instead of `totalDiscountedPrice`, the total shown at checkout. It now charges the discounted total, sent as a whole number of paise; orders with nothing to pay are rejected before Razorpay is called. Verified against the Razorpay test API: an order with MRP ₹1,999 and discounted total ₹599 produced a link for 59,900 paise (₹599).
 
+### Fixed in Step 4
+
+- Any captured Razorpay payment id could mark **any** order as paid, and anyone could confirm or create a payment link for another user's order. Confirmation now checks the caller, the Razorpay order and the amount; link creation checks the caller and refuses already-paid orders.
+- Confirming the same payment twice (the payment-success page runs its effect twice under React `StrictMode`) could process it twice; it is now idempotent.
+
 ### Known issues, not yet fixed
 
 | Issue | Planned in |
 |---|---|
 | Old secrets (Razorpay test key and secret, DB password, JWT secret) are still in git history and on GitHub. They should be rotated. | Step 10 |
-| Payment confirmation does not check that the Razorpay payment belongs to the given order, or that the order belongs to the caller. | Step 4 |
-| `GET /api/orders/{id}` and `POST /api/payments/{orderId}` do not check that the order belongs to the caller (any logged-in user can read any order, including its address). | Step 5 |
+| `GET /api/orders/{id}` does not check that the order belongs to the caller (any logged-in user can read any order, including its address). | Step 5 |
+| A payment that is not (yet) captured still gets the response "your order got placed" (unchanged; the order correctly stays `PENDING`). | Step 5 |
 | Adding an item with quantity > 1 stores quantity 1 (`CartItemServiceImplementation.createCartItem` overrides it). | Step 5 |
 | Client errors without a dedicated handler (missing query parameter, malformed JSON, wrong type) return 500 instead of 400. | Step 5 |
 | The catalog endpoint requires every filter parameter (400 if one is missing). It also loads every product in the category, then filters colour/size/stock and pages in Java. | Step 5 |

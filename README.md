@@ -31,7 +31,7 @@ Needs Docker running: integration tests start a throwaway PostgreSQL 16 containe
 | Suite | Where | What |
 |---|---|---|
 | Unit (JUnit 5 + Mockito) | `src/test/java/com/bazaarly/unit` | cart, cart items, orders, payment creation and confirmation, product filtering and search, JWT, roles, admin bootstrap |
-| Integration (Testcontainers) | `src/test/java/com/bazaarly/integration` | signup/signin and JWT access (valid, expired, forged, malformed), admin-only endpoints (normal user gets 403), cart → order → payment flow, catalog and search queries on PostgreSQL, error response shape and status codes, Redis cache hits and evictions (real Redis container) |
+| Integration (Testcontainers) | `src/test/java/com/bazaarly/integration` | signup/signin and JWT access (valid, expired, forged, malformed), admin-only endpoints (normal user gets 403), cart → order → payment flow, catalog and search queries on PostgreSQL, error response shape and status codes, Redis cache hits and evictions (real Redis container), async order-confirmation job: fast response, one email under retries and concurrency, retries after failures |
 
 Coverage report (JaCoCo): `target/site/jacoco/index.html` after `mvnw verify`.
 

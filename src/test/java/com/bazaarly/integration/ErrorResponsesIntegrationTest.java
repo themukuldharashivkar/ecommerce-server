@@ -81,7 +81,7 @@ class ErrorResponsesIntegrationTest extends IntegrationTest {
 	void unexpectedErrorsAre500WithTheSameShape() throws Exception {
 		String token = newUserToken();
 		addProductAndOrder(token);
-		when(paymentGateway.fetchPaymentStatus(anyString())).thenThrow(new IllegalStateException("provider exploded"));
+		when(paymentGateway.fetchPayment(anyString())).thenThrow(new IllegalStateException("provider exploded"));
 
 		ResultActions result = mvc.perform(get("/api/payments").param("payment_id", "pay_x").param("order_id", String.valueOf(lastOrderId))
 						.header(HttpHeaders.AUTHORIZATION, bearer(token)))
