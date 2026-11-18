@@ -1,0 +1,110 @@
+# Bazaarly: the whole stack on one machine.
+#
+#   docker compose up --build                         API + PostgreSQL + Redis + Mailpit
+#   docker compose --profile storefront up --build    ... plus the React storefront
+#                                                     (needs ../ecommerce-frontend checked out next to this repo)
+#
+#   API          http://localhost:5454   (Swagger UI: /swagger-ui.html, health: /actuator/health)
+#   Storefront   http://localhost:3000
+#   Mail inbox   http://localhost:8025   (order confirmations; nothing leaves your machine)
+#
+# Values come from .env when present (see .env.example). The defaults below are for LOCAL USE ONLY:
+# they let the stack start from a clean clone. Never use them for a deployment.
+# PostgreSQL and Redis are not published to the host; only the API reaches them.
+
+name: bazaarly
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ecommerce
+      POSTGRES_USER: ${DB_USERNAME:-bazaarly}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-bazaarly-local}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data   # data survives restarts and "docker compose down"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]   # a cache: no persistence needed
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  mailpit:
+    image: axllent/mailpit:v1.34.0
+    ports:
+      - "8025:8025"   # web inbox; SMTP (1025) stays inside the network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8025/livez"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    build: .
+    image: bazaarly-api:local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_healthy
+    ports:
+      - "5454:5454"
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ecommerce
+      DB_USERNAME: ${DB_USERNAME:-bazaarly}
+      DB_PASSWORD: ${DB_PASSWORD:-bazaarly-local}
+      JWT_SECRET: ${JWT_SECRET:-local-docker-only-jwt-secret-change-me-0123456789}
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-rzp_test_placeholder}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-placeholder}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@bazaarly.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin-local-only-123}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      CACHE_TYPE: redis
+      REDIS_HOST: redis
+      MAIL_ENABLED: "true"
+      MAIL_HOST: mailpit
+      MAIL_PORT: "1025"
+      # no reverse proxy in front locally: use the real client address for rate limiting
+      FORWARD_HEADERS_STRATEGY: none
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5454/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 5
+    restart: unless-stopped
+
+  storefront:
+    profiles: ["storefront"]
+    build:
+      context: ../ecommerce-frontend
+      args:
+        REACT_APP_API_URL: ${STOREFRONT_API_URL:-http://localhost:5454}
+    image: bazaarly-storefront:local
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

@@ -1,0 +1,15 @@
+# keep the build context small and never send secrets or local state into an image
+target/
+.git/
+.idea/
+.vscode/
+*.iml
+.env
+.env.*
+!.env.example
+docs/
+scripts/
+*.log
+.DS_Store
+docker-compose*.yml
+Dockerfile
