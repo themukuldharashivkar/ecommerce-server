@@ -226,7 +226,11 @@ Checked locally on 2026-11-18:
 - `actionlint` reports no problems in either workflow (including `shellcheck` of the `run:` steps).
 - The workflow commands pass: `./mvnw -B -ntp verify` (187 tests) and `npm ci`, `npm run lint` and `npm run build` on a fresh clone.
 
-The workflows have **not run on GitHub yet**, because nothing has been pushed. The CI badges show no status until the first run on `main`.
+First runs on GitHub, on 2026-11-18 (push of branch `upgrade/production-ready`), both green:
+- `ecommerce-server` run 44263554216: test job 1 min 48 s (187 tests, 0 failures, Testcontainers on the runner) and docker job 2 min 48 s (`push: false`, not `main`); `jacoco-report` uploaded.
+- `ecommerce-frontend` run 44263560317: lint (0 errors, 24 warnings) and build in 1 min 59 s, docker job 2 min 41 s; `storefront-build` uploaded.
+
+The badges track `main`, so they show no status until the branch is merged.
 
 The frontend's only test (`src/App.test.js`, the Create React App boilerplate) fails as it is, so CI does not run frontend tests.
 
