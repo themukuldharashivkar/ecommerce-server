@@ -1,5 +1,7 @@
 package com.bazaarly.modal;
 
+import org.hibernate.annotations.DynamicUpdate;
+
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -21,6 +23,9 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 
 @Entity
+// update only the columns that changed: saving an edited product must not write back a stale
+// quantity over stock reserved by orders in the meantime (stock is changed with SQL, see StockService)
+@DynamicUpdate
 public class Product {
 
 	@Id

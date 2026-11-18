@@ -211,7 +211,7 @@ class CheckoutFlowIntegrationTest extends IntegrationTest {
 	}
 
 	@Test
-	void gatewayErrorDuringConfirmationIs500AndChangesNothing() throws Exception {
+	void gatewayErrorDuringConfirmationIs502AndChangesNothing() throws Exception {
 		String token = newUserToken();
 		addToCart(token, createProduct("checkout_shirt", 1000, 700, "Blue", "M"), "M");
 		long orderId = createOrder(token).get("id").asLong();
@@ -219,7 +219,7 @@ class CheckoutFlowIntegrationTest extends IntegrationTest {
 
 		mvc.perform(get("/api/payments").param("payment_id", "pay_boom").param("order_id", String.valueOf(orderId))
 						.header(HttpHeaders.AUTHORIZATION, bearer(token)))
-				.andExpect(status().isInternalServerError());
+				.andExpect(status().isBadGateway());
 
 		assertThat(orderRepository.findById(orderId).orElseThrow().getOrderStatus()).isEqualTo(OrderStatus.PENDING);
 	}

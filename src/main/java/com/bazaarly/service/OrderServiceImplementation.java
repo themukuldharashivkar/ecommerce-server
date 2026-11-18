@@ -173,8 +173,13 @@ public class OrderServiceImplementation implements OrderService {
 	}
 
 	@Override
-	@Transactional(rollbackFor = Exception.class)
 	public Order cancledOrder(Long orderId) throws OrderException {
+		return cancelOrder(orderId, null);
+	}
+
+	@Override
+	@Transactional(rollbackFor = Exception.class)
+	public Order cancelOrder(Long orderId, String refundId) throws OrderException {
 		Order order=orderRepository.findByIdForUpdate(orderId)
 				.orElseThrow(() -> new OrderNotFoundException("order not exist with id "+orderId));
 		if (order.getOrderStatus() == OrderStatus.CANCELLED) {
@@ -183,9 +188,28 @@ public class OrderServiceImplementation implements OrderService {
 		if (order.getOrderStatus() == OrderStatus.SHIPPED || order.getOrderStatus() == OrderStatus.DELIVERED) {
 			throw new OrderException("Order " + orderId + " has already shipped and cannot be cancelled");
 		}
+		boolean paid = order.getPaymentDetails().getStatus() == PaymentStatus.COMPLETED;
+		if (paid && refundId == null) {
+			throw new OrderException("Order " + orderId + " is paid: it must be refunded before it is cancelled");
+		}
 		order.setOrderStatus(OrderStatus.CANCELLED);
+		if (paid) {
+			order.getPaymentDetails().setStatus(PaymentStatus.REFUNDED);
+			order.getPaymentDetails().setRazorpayRefundId(refundId);
+		}
 		stockService.release(order.getOrderItems());
 		return orderRepository.save(order);
+	}
+
+	@Override
+	@Transactional
+	public void recordRefundOnCancelledOrder(Long orderId, String paymentId, String refundId) {
+		orderRepository.findByIdForUpdate(orderId).ifPresent(order -> {
+			order.getPaymentDetails().setPaymentId(paymentId);
+			order.getPaymentDetails().setStatus(PaymentStatus.REFUNDED);
+			order.getPaymentDetails().setRazorpayRefundId(refundId);
+			orderRepository.save(order);
+		});
 	}
 
 	@Override

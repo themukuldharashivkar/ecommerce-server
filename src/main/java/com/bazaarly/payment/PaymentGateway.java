@@ -27,4 +27,13 @@ public interface PaymentGateway {
 	}
 
 	ProviderPayment fetchPayment(String paymentId) throws RazorpayException;
+
+	record Refund(String id, String status) {
+	}
+
+	/**
+	 * Refunds the payment in full. Idempotent: if the payment is already fully refunded (e.g. a retry
+	 * after a timeout), no new refund is created and the existing one is returned.
+	 */
+	Refund refundInFull(String paymentId, long amountInPaise, String reason) throws RazorpayException;
 }

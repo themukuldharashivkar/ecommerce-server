@@ -78,16 +78,27 @@ class ErrorResponsesIntegrationTest extends IntegrationTest {
 	}
 
 	@Test
-	void unexpectedErrorsAre500WithTheSameShape() throws Exception {
+	void paymentProviderErrorsAre502() throws Exception {
 		String token = newUserToken();
 		addProductAndOrder(token);
-		when(paymentGateway.fetchPayment(anyString())).thenThrow(new IllegalStateException("provider exploded"));
+		when(paymentGateway.fetchPayment(anyString())).thenThrow(new com.razorpay.RazorpayException("provider exploded"));
 
 		ResultActions result = mvc.perform(get("/api/payments").param("payment_id", "pay_x").param("order_id", String.valueOf(lastOrderId))
 						.header(HttpHeaders.AUTHORIZATION, bearer(token)))
+				.andExpect(status().isBadGateway());
+		assertErrorShape(result, "The payment provider could not complete the request. Please try again.", "/api/payments");
+	}
+
+	@Test
+	void unexpectedErrorsAre500WithTheSameShape() throws Exception {
+		String token = newUserToken();
+		addProductAndOrder(token);
+		when(paymentGateway.createPaymentLink(org.mockito.ArgumentMatchers.any())).thenThrow(new IllegalStateException("internal detail"));
+
+		ResultActions result = mvc.perform(post("/api/payments/" + lastOrderId).header(HttpHeaders.AUTHORIZATION, bearer(token)))
 				.andExpect(status().isInternalServerError());
 		// the internal message is logged, never sent to the client
-		assertErrorShape(result, "Something went wrong on our side. Please try again.", "/api/payments");
+		assertErrorShape(result, "Something went wrong on our side. Please try again.", "/api/payments/" + lastOrderId);
 	}
 
 	private long lastOrderId;

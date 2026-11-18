@@ -1,5 +1,7 @@
 package com.bazaarly.exception;
 
+import com.razorpay.RazorpayException;
+
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -115,6 +117,14 @@ public class GlobleException {
 	@ExceptionHandler(HttpMediaTypeNotSupportedException.class)
 	public ResponseEntity<ErrorDetails> wrongContentType(HttpMediaTypeNotSupportedException e, WebRequest req) {
 		return error(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "Content type not supported; send application/json", req);
+	}
+
+	// ---------- 502: the payment provider failed ----------
+
+	@ExceptionHandler(RazorpayException.class)
+	public ResponseEntity<ErrorDetails> paymentProvider(RazorpayException e, WebRequest req) {
+		log.error("Payment provider error on {}: {}", req.getDescription(false), e.getMessage());
+		return error(HttpStatus.BAD_GATEWAY, "The payment provider could not complete the request. Please try again.", req);
 	}
 
 	// ---------- 500 ----------

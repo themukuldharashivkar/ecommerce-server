@@ -22,6 +22,15 @@ public interface OrderService {
 
 	/** Cancels the order and gives its stock back if it is still unpaid and was created before the cutoff. */
 	public boolean expireIfUnpaid(Long orderId, java.time.LocalDateTime createdBefore);
+
+	/**
+	 * Cancels the order and gives its stock back. A paid order must already be refunded: pass the refund id
+	 * (PaymentService.cancelOrder does the refund first). Cancelling twice is a no-op.
+	 */
+	public Order cancelOrder(Long orderId, String refundId) throws OrderException;
+
+	/** Records a refund on an order that is already cancelled (a payment that arrived after it expired). */
+	public void recordRefundOnCancelledOrder(Long orderId, String paymentId, String refundId);
 	
 	public Order findOrderById(Long orderId) throws OrderException;
 	

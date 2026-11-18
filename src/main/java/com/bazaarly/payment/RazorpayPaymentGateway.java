@@ -73,4 +73,23 @@ public class RazorpayPaymentGateway implements PaymentGateway {
 		return new ProviderPayment(payment.optString("status", null), payment.optString("order_id", null),
 				payment.optLong("amount", -1));
 	}
+
+	@Override
+	public Refund refundInFull(String paymentId, long amountInPaise, String reason) throws RazorpayException {
+		RazorpayClient razorpay = client();
+		JSONObject payment = razorpay.payments.fetch(paymentId).toJson();
+		if (payment.optLong("amount_refunded", 0) >= amountInPaise) {
+			java.util.List<com.razorpay.Refund> existing = razorpay.payments.fetchAllRefunds(paymentId);
+			String id = existing.isEmpty() ? null : existing.get(0).toJson().optString("id", null);
+			log.info("Payment {} is already refunded ({})", paymentId, id);
+			return new Refund(id, "already_refunded");
+		}
+		JSONObject request = new JSONObject();
+		request.put("amount", amountInPaise);
+		request.put("speed", "normal");
+		request.put("notes", new JSONObject().put("reason", reason));
+		JSONObject refund = razorpay.payments.refund(paymentId, request).toJson();
+		log.info("Refund {} created for payment {}", refund.optString("id"), paymentId);
+		return new Refund(refund.optString("id", null), refund.optString("status", null));
+	}
 }

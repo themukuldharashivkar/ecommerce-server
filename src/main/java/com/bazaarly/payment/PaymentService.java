@@ -134,19 +134,55 @@ public class PaymentService {
 		}
 
 		if (order.getOrderStatus() == OrderStatus.CANCELLED) {
-			return expiredButPaid(orderId, paymentId);
+			return expiredButPaid(order, paymentId);
 		}
 		Boolean placedNow = transaction.execute(status -> markPaid(orderId, paymentId));
 		if (Boolean.FALSE.equals(placedNow)) {
-			return expiredButPaid(orderId, paymentId);
+			return expiredButPaid(orderService.findOrderById(orderId), paymentId);
 		}
 		return placed();
 	}
 
-	/** Expired orders have released their stock, so a payment that arrives afterwards cannot place them. */
-	private ApiResponse expiredButPaid(Long orderId, String paymentId) throws OrderException {
-		log.error("Captured payment {} for order {} that was already cancelled or expired: needs a refund", paymentId, orderId);
-		throw new OrderException("This order expired before the payment completed. Contact support for a refund.");
+	/**
+	 * An expired order has released its stock, so a payment that arrives afterwards cannot place it.
+	 * The payment is refunded automatically (idempotent, so a repeated confirmation does not refund twice).
+	 */
+	private ApiResponse expiredButPaid(Order order, String paymentId) throws OrderException {
+		try {
+			PaymentGateway.Refund refund = paymentGateway.refundInFull(paymentId, payableInPaise(order),
+					"Order " + order.getId() + " expired before payment");
+			orderService.recordRefundOnCancelledOrder(order.getId(), paymentId, refund.id());
+			log.warn("Payment {} arrived after order {} expired; refunded ({})", paymentId, order.getId(), refund.id());
+			throw new OrderException("This order expired before the payment completed. Your payment has been refunded.");
+		} catch (RazorpayException e) {
+			log.error("Payment {} for expired order {} could not be refunded automatically: {}", paymentId, order.getId(),
+					e.getMessage());
+			throw new OrderException("This order expired before the payment completed and the automatic refund failed. "
+					+ "Please contact support.");
+		}
+	}
+
+	/**
+	 * Admin cancellation. A paid order is refunded in full first (outside the database transaction, it is an
+	 * external call), then cancelled with its stock given back. If the refund fails nothing changes and the
+	 * admin can retry; a retry never refunds twice (the gateway checks what was already refunded).
+	 */
+	public Order cancelOrder(Long orderId) throws OrderException, RazorpayException {
+		Order order = orderService.findOrderById(orderId);
+		if (order.getOrderStatus() == OrderStatus.CANCELLED) {
+			return order;
+		}
+		if (order.getOrderStatus() == OrderStatus.SHIPPED || order.getOrderStatus() == OrderStatus.DELIVERED) {
+			throw new OrderException("Order " + orderId + " has already shipped and cannot be cancelled");
+		}
+		String refundId = null;
+		if (isPaid(order)) {
+			PaymentGateway.Refund refund = paymentGateway.refundInFull(order.getPaymentDetails().getPaymentId(),
+					payableInPaise(order), "Order " + orderId + " cancelled");
+			refundId = refund.id();
+			log.info("Order {} refunded ({}) before cancelling", orderId, refundId);
+		}
+		return orderService.cancelOrder(orderId, refundId);
 	}
 
 	/**

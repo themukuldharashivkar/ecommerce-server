@@ -116,7 +116,7 @@ class ProductServiceTest {
 		when(productRepository.findById(5L)).thenReturn(Optional.of(existing));
 		when(productRepository.save(existing)).thenReturn(existing);
 
-		Product updated = service.updateProduct(5L, new UpdateProductRequest(9, null));
+		Product updated = service.updateProduct(5L, UpdateProductRequest.of(9, null));
 
 		assertThat(updated.getQuantity()).isEqualTo(9);
 		assertThat(updated.getDescription()).isEqualTo("old");
@@ -130,6 +130,6 @@ class ProductServiceTest {
 		when(productRepository.save(existing)).thenReturn(existing);
 
 		// previously a quantity of 0 was treated as "not provided"
-		assertThat(service.updateProduct(5L, new UpdateProductRequest(0, null)).getQuantity()).isZero();
+		assertThat(service.updateProduct(5L, UpdateProductRequest.of(0, null)).getQuantity()).isZero();
 	}
 }

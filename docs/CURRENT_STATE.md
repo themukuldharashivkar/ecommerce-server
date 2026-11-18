@@ -42,6 +42,7 @@ The schema is owned by Flyway (`src/main/resources/db/migration`); Hibernate run
 | `V2__indexes.sql` | Indexes on every foreign key, `(category_id, discounted_price)` for the catalog filter, `pg_trgm` trigram indexes for search, unique `users.email` and `cart.user_id`. |
 | `V3__order_notifications.sql` | `order_notification` outbox table, unique per (order, type). |
 | `V4__product_sizes_unique.sql` | Each product lists a size once (unique on product and lower-cased size name). |
+| `V5__payment_refunds.sql` | `razorpay_refund_id` on orders; payment status `REFUNDED`. |
 
 Enums (`UserRole`, `OrderStatus`, `PaymentMethod`, `PaymentStatus`) use `@Enumerated(EnumType.STRING)`, so reordering an enum can no longer corrupt stored data. Benchmarks are in [PERFORMANCE.md](PERFORMANCE.md).
 
@@ -83,6 +84,7 @@ Every error has the same body: `{"error": "...", "details": "uri=/api/...", "tim
 | 404 | Unknown product, order, cart item or route. Another user's order also gets 404, so ids cannot be probed. |
 | 405 / 415 | Wrong HTTP method or content type |
 | 429 | Rate limit on `/auth/signin` (10 per minute per IP) or `/auth/signup` (5 per 10 minutes per IP), with `Retry-After` |
+| 502 | Razorpay failed (creating a link, checking a payment, refunding) |
 | 500 | Anything unexpected. The response gives a generic message; the details are only in the server log. |
 
 Signup takes a `SignupRequest` (first and last name, email, password) instead of the `User` entity. Passwords must be 8–72 characters with at least one letter and one number. Emails are stored lower-cased and compared case-insensitively.
@@ -109,8 +111,11 @@ Measurements are in [PERFORMANCE.md](PERFORMANCE.md#2-redis-cache-for-the-catalo
 
 - **Placing an order reserves stock.** In the same transaction as the order, each item's quantity is taken from both the product total and the chosen size with a conditional `UPDATE ... WHERE quantity >= n`. The database therefore refuses to oversell, even when several orders for the last item arrive together (tested with 6 concurrent buyers: one succeeds). If any item is short, nothing is reserved and the shopper gets a 400 such as "Only 1 left of ... in size L".
 - **Adding to the cart** checks that the size exists and has enough left. Changing a cart line's quantity checks the same.
-- **Unpaid orders expire.** The Razorpay link expires `ORDER_RESERVATION_TTL` (default 60 min) after the order was placed. A job running every minute cancels unpaid orders 5 minutes after that and gives their stock back. A payment link is refused for an order with less than 16 minutes left (Razorpay's 15-minute minimum). A captured payment for an order that has already expired is refused with an error (logged for a manual refund), because its stock may have been sold again.
+- **Unpaid orders expire.** The Razorpay link expires `ORDER_RESERVATION_TTL` (default 60 min) after the order was placed. A job running every minute cancels unpaid orders 5 minutes after that and gives their stock back. A payment link is refused for an order with less than 16 minutes left (Razorpay's 15-minute minimum). A captured payment for an order that has already expired is refunded automatically (see below), because its stock may have been sold again.
 - **Cancelling** (admin) gives the stock back once; shipped or delivered orders cannot be cancelled. Deleting an order that still holds stock also gives it back.
+- **Cancelling a paid order refunds it in full through Razorpay** before the order is cancelled. The refund id is stored and the payment status becomes `REFUNDED`. If the refund fails, the order is left unchanged and the admin gets a 502 and can retry. A retry never refunds twice: the gateway first checks how much of the payment was already refunded.
+- **A payment that arrives after its order expired is refunded automatically** (same idempotent refund), and the shopper is told so. If that refund fails, they are asked to contact support and the error is logged.
+- Editing a product writes only the changed columns (`@DynamicUpdate`), so an admin edit cannot overwrite stock reserved by orders while the edit page was open.
 - **The cart is emptied when the order is paid**, not when it is placed, so an abandoned payment does not lose the cart. Only the paid items are removed; anything added since stays.
 - Stock is part of the cached product JSON, so the product and catalog caches are evicted after each stock change commits.
 
@@ -217,12 +222,12 @@ Measured on 2026-11-18 (`./mvnw clean verify`, 19 s on an Apple M5):
 | | Count |
 |---|---|
 | Unit tests (JUnit 5 + Mockito) | 72 |
-| Integration tests (Spring Boot + Testcontainers PostgreSQL; caching tests also use a Redis container) | 107 |
-| **Total** | **179, all passing** |
+| Integration tests (Spring Boot + Testcontainers PostgreSQL; caching tests also use a Redis container) | 115 |
+| **Total** | **187, all passing** |
 
 JaCoCo line coverage: service layer (`service` + `payment` packages) **87.0%** (450/517 lines); `service` alone 92.4%. `payment` is lower because `RazorpayPaymentGateway`, the thin wrapper around the Razorpay SDK, is deliberately not exercised. Whole codebase 79.9% of lines, 60.3% of branches.
 
-To check that the tests catch real regressions, bugs were planted temporarily: removing the admin role rule failed 2 tests, marking uncaptured payments as paid failed 2 tests, removing the cache eviction on product update failed 1 test, running the confirmation job synchronously (no `@Async`) failed 1 test, removing the idempotency guards failed 2 tests (duplicate emails), removing the `quantity >= n` stock guard failed 2 tests (overselling), removing `Size` equality failed 12 tests, and not clearing the cart on payment failed 1 test.
+To check that the tests catch real regressions, bugs were planted temporarily: removing the admin role rule failed 2 tests, marking uncaptured payments as paid failed 2 tests, removing the cache eviction on product update failed 1 test, running the confirmation job synchronously (no `@Async`) failed 1 test, removing the idempotency guards failed 2 tests (duplicate emails), removing the `quantity >= n` stock guard failed 2 tests (overselling), removing `Size` equality failed 12 tests, not clearing the cart on payment failed 1 test, and removing `@DynamicUpdate` failed 1 test (stale stock overwritten).
 
 ## Baseline check (2026-11-17)
 
@@ -290,6 +295,14 @@ A 32-check smoke test of the API (catalog, search, auth, cart, order, Razorpay l
 - **Regression from Step 5, fixed:** the storefront's add-to-cart sends no `quantity`, and the new `@Min(1)` rejected it, so adding to the cart from the real frontend failed. A missing quantity now means 1 (tested with the exact storefront payload). The phone pattern also accepts dashes and brackets now.
 - **Hibernate rewrote `product_sizes` on every flush of a loaded product.** `Size` (an `@ElementCollection` embeddable) had no `equals`/`hashCode`, so Hibernate saw the collection as changed and deleted and re-inserted its rows from memory. With stock now changed in SQL, this duplicated sizes and undid reservations. Fixed with value equality; V4 adds a unique index so the database rejects any duplicate. This also makes the order of sizes in responses stable.
 
+### Fixed after Step 6
+
+- Cancelling a paid order now refunds it through Razorpay; late payments for expired orders are refunded automatically.
+- The admin "update product" page called a URL that does not exist (`PUT /api/admin/products/{id}`) with no body, and the API could only change quantity and description. The page now sends title, description, brand, colour, image URL, prices, discount and quantity to `PUT /api/admin/products/{id}/update`, which accepts all of them, checks "discounted price <= price" after merging with the stored product, and reports the API's message on the page. Category and sizes are not editable there.
+- Razorpay errors return 502 instead of 500.
+
+Refunds were tested with the Razorpay gateway mocked. A real test-mode refund needs a captured test payment, which can only be made in the browser checkout.
+
 ### Known issues, not yet fixed
 
 | Issue | Planned in |
@@ -298,5 +311,3 @@ A 32-check smoke test of the API (catalog, search, auth, cart, order, Razorpay l
 | The live Railway deployment still runs the MySQL build; moving it to PostgreSQL means a new database (existing live users and orders are not migrated). | Step 8 |
 | Rate limits are per instance (in memory). With several instances each enforces its own limit. | if scaled out |
 | Admin "list all orders" and the user's order history return the first 50 by default; the frontend does not request further pages yet. | open |
-| Cancelling a paid order does not refund it through Razorpay (test mode only). | open |
-| The admin "update product" page calls `PUT /api/admin/products/{id}` (no `/update`) without a body; it was already broken before the upgrade. | open |

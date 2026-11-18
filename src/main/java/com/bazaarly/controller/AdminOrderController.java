@@ -1,5 +1,9 @@
 package com.bazaarly.controller;
 
+import com.razorpay.RazorpayException;
+
+import com.bazaarly.payment.PaymentService;
+
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import com.bazaarly.config.OpenApiConfig;
@@ -41,8 +45,10 @@ import com.bazaarly.service.OrderService;
 public class AdminOrderController {
 	
 	private OrderService orderService;
+	private PaymentService paymentService;
 	
-	public AdminOrderController(OrderService orderService) {
+	public AdminOrderController(OrderService orderService, PaymentService paymentService) {
+		this.paymentService=paymentService;
 		this.orderService=orderService;
 	}
 	
@@ -71,8 +77,10 @@ public class AdminOrderController {
 	}
 	
 	@PutMapping("/{orderId}/cancel")
-	public ResponseEntity<Order> canceledOrderHandler(@PathVariable Long orderId, @RequestHeader("Authorization") String jwt) throws OrderException{
-		Order order=orderService.cancledOrder(orderId);
+	public ResponseEntity<Order> canceledOrderHandler(@PathVariable Long orderId, @RequestHeader("Authorization") String jwt)
+			throws OrderException, RazorpayException{
+		// paid orders are refunded through Razorpay first, then cancelled
+		Order order=paymentService.cancelOrder(orderId);
 		return new ResponseEntity<Order>(order,HttpStatus.ACCEPTED);
 	}
 	

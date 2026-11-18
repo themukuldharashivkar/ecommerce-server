@@ -17,6 +17,7 @@ public class PaymentDetails {
 	private String razorpayPaymentLinkReferenceId;
 	private String razorpayPaymentLinkStatus;
 	private String razorpayPaymentId;
+	private String razorpayRefundId;
 	
 	public PaymentDetails() {
 		// TODO Auto-generated constructor stub
@@ -75,4 +76,12 @@ public class PaymentDetails {
 	
 	
 
+
+	public String getRazorpayRefundId() {
+		return razorpayRefundId;
+	}
+
+	public void setRazorpayRefundId(String razorpayRefundId) {
+		this.razorpayRefundId = razorpayRefundId;
+	}
 }

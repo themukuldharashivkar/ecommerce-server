@@ -271,12 +271,18 @@ class StockAndCartIntegrationTest extends IntegrationTest {
 		expiryJob.expireUnpaidOrders();
 		when(paymentGateway.fetchPayment("pay_late"))
 				.thenReturn(new PaymentGateway.ProviderPayment("captured", "order_rzp_" + orderId, 80000));
+		when(paymentGateway.refundInFull("pay_late", 80000, "Order " + orderId + " expired before payment"))
+				.thenReturn(new PaymentGateway.Refund("rfnd_late", "processed"));
 
 		mvc.perform(get("/api/payments").param("payment_id", "pay_late").param("order_id", String.valueOf(orderId))
 						.header(HttpHeaders.AUTHORIZATION, bearer(token)))
 				.andExpect(status().isBadRequest())
-				.andExpect(jsonPath("$.error").value("This order expired before the payment completed. Contact support for a refund."));
+				.andExpect(jsonPath("$.error").value("This order expired before the payment completed. Your payment has been refunded."));
 		assertThat(stock(product)).isEqualTo(10); // the released stock was not taken again
+		// the late payment is refunded automatically and recorded on the cancelled order
+		assertThat(jdbc.queryForObject("SELECT status FROM orders WHERE id = ?", String.class, orderId)).isEqualTo("REFUNDED");
+		assertThat(jdbc.queryForObject("SELECT razorpay_refund_id FROM orders WHERE id = ?", String.class, orderId)).isEqualTo("rfnd_late");
+		assertThat(jdbc.queryForObject("SELECT payment_id FROM orders WHERE id = ?", String.class, orderId)).isEqualTo("pay_late");
 	}
 
 	// ---------- payment link expiry ----------

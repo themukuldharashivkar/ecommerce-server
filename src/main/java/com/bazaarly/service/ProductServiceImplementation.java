@@ -127,6 +127,30 @@ public class ProductServiceImplementation implements ProductService {
 		if(req.description()!=null) {
 			product.setDescription(req.description());
 		}
+		if(req.title()!=null) {
+			product.setTitle(req.title().trim());
+		}
+		if(req.brand()!=null) {
+			product.setBrand(req.brand().trim());
+		}
+		if(req.color()!=null) {
+			product.setColor(req.color().trim());
+		}
+		if(req.imageUrl()!=null) {
+			product.setImageUrl(req.imageUrl().trim());
+		}
+		if(req.price()!=null) {
+			product.setPrice(req.price());
+		}
+		if(req.discountedPrice()!=null) {
+			product.setDiscountedPrice(req.discountedPrice());
+		}
+		if(req.discountPersent()!=null) {
+			product.setDiscountPersent(req.discountPersent());
+		}
+		if(product.getDiscountedPrice() > product.getPrice()) {
+			throw new ProductException("Discounted price cannot be higher than the price");
+		}
 		return productRepository.save(product);
 	}
 
