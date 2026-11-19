@@ -63,4 +63,14 @@ Create an uptime monitor on `https://<api>/actuator/health` every 10 minutes.
 
 ## Live verification
 
-(Filled in after deploying: health, smoke test, CORS from the storefront, a test-mode payment, cold-start time, latency.)
+Checked on the live deployment (Render Singapore, Upstash, Vercel preview), November 2026:
+
+- **Health:** `/actuator/health` returns `UP`. Other actuator endpoints (e.g. `/actuator/env`) are not exposed.
+- **CORS:** requests from the Vercel preview origin are allowed.
+- **Catalog:** 499 products seeded; listing, filters and search work.
+- **Roles:** the demo shopper (`ROLE_USER`) gets 403 on admin endpoints. The demo admin (`ROLE_ADMIN_VIEWER`) can read the admin panel but gets 403 on every write.
+- **API docs:** Swagger UI lists 30 paths.
+- **Checkout with a real test-mode payment:** order placed with stock reserved; Razorpay payment link paid (Netbanking test bank); the order became `PLACED` with payment `COMPLETED`, the cart line was removed, and the stock stayed reserved. A second payment request for the same order returns the same link.
+  - This found a bug the tests had missed: Razorpay creates no order ID for a payment link until it is paid, so matching payments by order ID rejected every real payment. Payments are now matched through the stored payment link (commit `5368763`), with a regression test that models Razorpay's real behaviour.
+- **Latency** (warm instance, from India): about 250–265 ms p50 for catalog requests, mostly TLS and Render's proxy.
+- **Cold start:** not measured yet.
