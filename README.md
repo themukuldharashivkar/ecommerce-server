@@ -207,7 +207,7 @@ The full, interactive reference is in Swagger UI (`/swagger-ui.html`). The main 
 
 ## Deployment and CI
 
-- **CI** (GitHub Actions) runs `./mvnw verify` with all tests on every push and pull request, and then builds the Docker image. On `main` the image is pushed to GitHub Container Registry.
+- **CI** (GitHub Actions) runs on every push and pull request. It scans the whole git history for secrets (gitleaks, [docs/SECURITY.md](docs/SECURITY.md)), runs `./mvnw verify` with all tests, and then builds the Docker image. On `main` the image is pushed to GitHub Container Registry.
 - **Hosting:** the API runs on Render from [`render.yaml`](render.yaml) (Docker, PostgreSQL 16), Redis on Upstash and the storefront on Vercel. Setup, free-tier limits and the live checks are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## What I would improve next
@@ -227,3 +227,4 @@ The full, interactive reference is in Swagger UI (`/swagger-ui.html`). The main 
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md): every measurement, with method and limits
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): Render, Upstash and Vercel setup, and the live verification
 - [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md): configuration, profiles, fixed and known issues
+- [docs/SECURITY.md](docs/SECURITY.md): where secrets live, the CI secret scan, and secrets in old commits that must be rotated

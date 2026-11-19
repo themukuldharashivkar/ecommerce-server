@@ -1,0 +1,25 @@
+# Secret scan (gitleaks), run in CI on the full history. The default rules plus two this project needs:
+# the default generic rules missed both kinds of secret that were committed in the first commits.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "hardcoded-java-secret"
+description = "A secret, key or password hard-coded in a Java string constant"
+regex = '''(?i)(?:secret|password|passwd|api_?key)[a-z_]*\s*=\s*"([^"\s]{8,})"'''
+path = '''\.java$'''
+secretGroup = 1
+
+  [rules.allowlist]
+  # test fixtures (dummy passwords for throwaway test accounts)
+  paths = ['''src/test/''']
+
+[[rules]]
+id = "spring-literal-password"
+description = "A literal Spring password, or a non-empty ${VAR:default} fallback"
+regex = '''(?i)\.password\s*=\s*(?:\$\{[A-Z0-9_]+:([^}\s]+)\}|([^$\s][^\s]*))'''
+path = '''\.(?:properties|ya?ml)$'''
+
+  [rules.allowlist]
+  # placeholders and the documented local-only / test defaults
+  regexes = ['''(?i)\.password\s*=\s*(?:\$\{[A-Z0-9_]+:?\}|\$\{[A-Z0-9_]+\})\s*$''', '''(?i)(?:test|dummy|changeme|local-only|example)''']

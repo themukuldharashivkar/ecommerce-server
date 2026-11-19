@@ -13,6 +13,22 @@ permissions:
   contents: read
 
 jobs:
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # the whole history, not just the last commit
+
+      # known old findings are listed in .gitleaksignore (see docs/SECURITY.md); anything new fails the build
+      - name: Scan all commits
+        run: >
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.30.1
+          git /repo --config /repo/.gitleaks.toml --gitleaks-ignore-path /repo/.gitleaksignore
+          --redact --no-banner --log-opts="--all"
+
   test:
     name: Build and test (mvn verify)
     runs-on: ubuntu-latest
