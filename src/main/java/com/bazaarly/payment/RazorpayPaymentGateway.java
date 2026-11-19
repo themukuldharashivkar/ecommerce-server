@@ -59,11 +59,32 @@ public class RazorpayPaymentGateway implements PaymentGateway {
 		String paymentLinkUrl = payment.get("short_url");
 
 		// the Razorpay order id is only available on the fetched link
-		PaymentLink fetchedPayment = razorpay.paymentLink.fetch(paymentLinkId);
-		String providerOrderId = fetchedPayment.get("order_id");
+		// usually empty until the link is paid; payments are matched through the link (PaymentService)
+		String providerOrderId = razorpay.paymentLink.fetch(paymentLinkId).toJson().optString("order_id", null);
+		if (providerOrderId != null && providerOrderId.isBlank()) {
+			providerOrderId = null;
+		}
 
 		log.info("Created Razorpay payment link {}", paymentLinkId);
 		return new CreatedPaymentLink(paymentLinkId, paymentLinkUrl, providerOrderId);
+	}
+
+	@Override
+	public PaymentLinkState fetchPaymentLink(String linkId) throws RazorpayException {
+		JSONObject link = client().paymentLink.fetch(linkId).toJson();
+		java.util.List<String> paymentIds = new java.util.ArrayList<>();
+		org.json.JSONArray payments = link.optJSONArray("payments");
+		if (payments != null) {
+			for (int i = 0; i < payments.length(); i++) {
+				String id = payments.getJSONObject(i).optString("payment_id", null);
+				if (id != null) {
+					paymentIds.add(id);
+				}
+			}
+		}
+		String orderId = link.optString("order_id", null);
+		return new PaymentLinkState(link.optString("id", linkId), link.optString("short_url", null),
+				link.optString("status", null), orderId == null || orderId.isBlank() ? null : orderId, paymentIds);
 	}
 
 	@Override

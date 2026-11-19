@@ -199,6 +199,62 @@ class PaymentServiceTest {
 		verify(events, never()).publishEvent(any());
 	}
 
+	// ---------- Razorpay's real behaviour: no order id until the link is paid ----------
+
+	@Test
+	void paymentIsMatchedThroughThePaymentLinkWhenNoOrderIdWasKnownAtCreation() throws Exception {
+		order.getPaymentDetails().setRazorpayPaymentLinkId("plink_1"); // order.getOrderId() stays null
+		when(orderService.findOrderById(42L)).thenReturn(order);
+		when(gateway.fetchPayment("pay_1")).thenReturn(captured("order_created_at_payment", 119900));
+		when(gateway.fetchPaymentLink("plink_1")).thenReturn(new PaymentGateway.PaymentLinkState(
+				"plink_1", "https://rzp.io/x", "paid", "order_created_at_payment", java.util.List.of("pay_1")));
+		when(orderRepository.findByIdForUpdate(42L)).thenReturn(Optional.of(order));
+		when(notificationStore.createIfAbsent(42L)).thenReturn(true);
+
+		service.confirmPayment("pay_1", 42L, OWNER);
+
+		assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.PLACED);
+		assertThat(order.getPaymentDetails().getStatus()).isEqualTo(PaymentStatus.COMPLETED);
+	}
+
+	@Test
+	void paymentThatIsNotOnTheOrdersLinkIsRejected() throws Exception {
+		order.getPaymentDetails().setRazorpayPaymentLinkId("plink_1");
+		when(orderService.findOrderById(42L)).thenReturn(order);
+		when(gateway.fetchPayment("pay_other")).thenReturn(captured("order_other", 119900));
+		when(gateway.fetchPaymentLink("plink_1")).thenReturn(new PaymentGateway.PaymentLinkState(
+				"plink_1", "https://rzp.io/x", "created", null, java.util.List.of()));
+
+		assertThatThrownBy(() -> service.confirmPayment("pay_other", 42L, OWNER))
+				.hasMessage("payment pay_other does not belong to order 42");
+		assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.PENDING);
+	}
+
+	@Test
+	void anOrdersStillPayableLinkIsReusedInsteadOfCreatingAnother() throws Exception {
+		order.getPaymentDetails().setRazorpayPaymentLinkId("plink_1");
+		when(orderService.findOrderById(42L)).thenReturn(order);
+		when(gateway.fetchPaymentLink("plink_1")).thenReturn(new PaymentGateway.PaymentLinkState(
+				"plink_1", "https://rzp.io/existing", "created", null, java.util.List.of()));
+
+		PaymentLinkResponse response = service.createPaymentLink(42L, OWNER);
+
+		assertThat(response.getPayment_link_url()).isEqualTo("https://rzp.io/existing");
+		verify(gateway, never()).createPaymentLink(any());
+	}
+
+	@Test
+	void anExpiredLinkIsReplacedAndTheNewLinkIdStored() throws Exception {
+		order.getPaymentDetails().setRazorpayPaymentLinkId("plink_old");
+		when(orderService.findOrderById(42L)).thenReturn(order);
+		when(gateway.fetchPaymentLink("plink_old")).thenReturn(new PaymentGateway.PaymentLinkState(
+				"plink_old", "https://rzp.io/old", "expired", null, java.util.List.of()));
+		when(gateway.createPaymentLink(any())).thenReturn(new PaymentGateway.CreatedPaymentLink("plink_new", "https://rzp.io/new", null));
+
+		assertThat(service.createPaymentLink(42L, OWNER).getPayment_link_url()).isEqualTo("https://rzp.io/new");
+		assertThat(order.getPaymentDetails().getRazorpayPaymentLinkId()).isEqualTo("plink_new");
+	}
+
 	@Test
 	void paymentForAnotherProviderOrderIsRejected() throws Exception {
 		orderWithLink();

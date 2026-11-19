@@ -81,6 +81,15 @@ public class PaymentService {
 		// charge what the shopper sees at checkout: the total after discounts, in paise
 		long payable = payableInPaise(order);
 
+		// one payable link per order: reuse it, so a payment can always be matched to the stored link
+		String existingLinkId = order.getPaymentDetails().getRazorpayPaymentLinkId();
+		if (existingLinkId != null) {
+			PaymentGateway.PaymentLinkState existing = paymentGateway.fetchPaymentLink(existingLinkId);
+			if (existing != null && existing.isPayable() && existing.shortUrl() != null) {
+				return new PaymentLinkResponse(existing.shortUrl(), existing.id());
+			}
+		}
+
 		PaymentGateway.CreatedPaymentLink link = paymentGateway.createPaymentLink(new PaymentGateway.PaymentLinkRequest(
 				payable,
 				user.getFirstName() + " " + user.getLastName(),
@@ -90,6 +99,7 @@ public class PaymentService {
 				expiresAt.getEpochSecond()));
 
 		order.setOrderId(link.providerOrderId());
+		order.getPaymentDetails().setRazorpayPaymentLinkId(link.id());
 		orderRepository.save(order);
 
 		return new PaymentLinkResponse(link.shortUrl(), link.id());
@@ -122,7 +132,7 @@ public class PaymentService {
 			log.info("Payment {} for order {} not captured (status {})", paymentId, orderId, payment.status());
 			return new ApiResponse("payment not completed yet", false);
 		}
-		if (order.getOrderId() == null || !order.getOrderId().equals(payment.providerOrderId())) {
+		if (!belongsToOrder(order, paymentId, payment)) {
 			log.warn("Payment {} belongs to provider order {}, not to order {} ({})", paymentId,
 					payment.providerOrderId(), orderId, order.getOrderId());
 			throw new OrderException("payment " + paymentId + " does not belong to order " + orderId);
@@ -213,6 +223,27 @@ public class PaymentService {
 		}
 		log.info("Payment {} captured, order {} placed", paymentId, orderId);
 		return true;
+	}
+
+	/**
+	 * The payment must have been made through this order's payment link. Razorpay creates the order behind a
+	 * payment link only when it is paid, so the link is asked which payments it received.
+	 */
+	private boolean belongsToOrder(Order order, String paymentId, PaymentGateway.ProviderPayment payment)
+			throws RazorpayException {
+		if (order.getOrderId() != null && order.getOrderId().equals(payment.providerOrderId())) {
+			return true;
+		}
+		String linkId = order.getPaymentDetails().getRazorpayPaymentLinkId();
+		if (linkId == null) {
+			return false;
+		}
+		PaymentGateway.PaymentLinkState link = paymentGateway.fetchPaymentLink(linkId);
+		if (link == null) {
+			return false;
+		}
+		return link.paymentIds().contains(paymentId)
+				|| (link.providerOrderId() != null && link.providerOrderId().equals(payment.providerOrderId()));
 	}
 
 	/** Unknown orders and other users' orders look the same, so ids cannot be probed. */

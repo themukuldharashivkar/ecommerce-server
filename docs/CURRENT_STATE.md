@@ -126,7 +126,7 @@ Measurements are in [PERFORMANCE.md](PERFORMANCE.md#2-redis-cache-for-the-catalo
 
 1. Checks that the order belongs to the caller. Another user's order gets the same 400 as an unknown order.
 2. If the order is already paid, it returns straight away (a no-op).
-3. Fetches the payment from Razorpay and only accepts it if it is `captured`, belongs to this order's Razorpay order (stored when the link was created), and is for the full discounted amount.
+3. Fetches the payment from Razorpay and only accepts it if it is `captured`, was made through this order's payment link, and is for the full discounted amount. Razorpay creates the order behind a payment link only when it is paid, so the stored link id is used: the link is fetched and must list the payment (or carry the payment's order id). Each order has one payable link; asking again returns the same link while it can still be paid.
 4. In one transaction, with the order row locked (`SELECT ... FOR UPDATE`), it re-checks that the order is unpaid, marks it `PLACED`/`COMPLETED`, and inserts an `order_notification` row (`ON CONFLICT DO NOTHING`).
 5. After the transaction commits, `OrderConfirmationJob` runs on a bounded pool (2 threads, queue of 100) and sends the email, so the HTTP response does not wait for it.
 
@@ -247,9 +247,9 @@ Measured on 2026-11-18 (`./mvnw clean verify`, 19 s on an Apple M5):
 
 | | Count |
 |---|---|
-| Unit tests (JUnit 5 + Mockito) | 72 |
-| Integration tests (Spring Boot + Testcontainers PostgreSQL; caching tests also use a Redis container) | 116 |
-| **Total** | **188, all passing** |
+| Unit tests (JUnit 5 + Mockito) | 76 |
+| Integration tests (Spring Boot + Testcontainers PostgreSQL; caching tests also use a Redis container) | 117 |
+| **Total** | **193, all passing** |
 
 JaCoCo line coverage: service layer (`service` + `payment` packages) **87.0%** (450/517 lines); `service` alone 92.4%. `payment` is lower because `RazorpayPaymentGateway`, the thin wrapper around the Razorpay SDK, is deliberately not exercised. Whole codebase 79.9% of lines, 60.3% of branches.
 
@@ -328,6 +328,10 @@ A 32-check smoke test of the API (catalog, search, auth, cart, order, Razorpay l
 - Razorpay errors return 502 instead of 500.
 
 Refunds were tested with the Razorpay gateway mocked. A real test-mode refund needs a captured test payment, which can only be made in the browser checkout.
+
+### Fixed during deployment (found on the live site)
+
+- **Real payments would have been rejected.** The Step 4 check compared the payment's Razorpay order id with the one stored when the payment link was created, but Razorpay only creates that order when the link is paid, so the stored value was empty. The live data showed it (`order_id` null on every order). The tests had missed it because the mocked gateway always returned an order id at creation. Payments are now matched through the stored payment link; a regression test uses Razorpay's real behaviour and fails with the old check.
 
 ### Known issues, not yet fixed
 

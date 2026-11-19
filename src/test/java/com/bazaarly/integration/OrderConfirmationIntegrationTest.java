@@ -255,6 +255,34 @@ class OrderConfirmationIntegrationTest extends IntegrationTest {
 	}
 
 	@Test
+	void realRazorpayFlowWithoutAnOrderIdAtLinkCreationPlacesTheOrder() throws Exception {
+		// regression: Razorpay returns no order id when a payment link is created (it is made at payment time)
+		String email = uniqueEmail("realflow");
+		String token = signUp(email);
+		long productId = createProduct("confirm_real", 1000, 700, "Blue", "M").getId();
+		mvc.perform(put("/api/cart/add").header(HttpHeaders.AUTHORIZATION, bearer(token)).contentType(MediaType.APPLICATION_JSON)
+				.content(json.writeValueAsString(Map.of("productId", productId, "size", "M"))));
+		long orderId = readJson(mvc.perform(post("/api/orders/").header(HttpHeaders.AUTHORIZATION, bearer(token))
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"firstName\":\"A\",\"lastName\":\"B\",\"streetAddress\":\"1 St\",\"city\":\"Pune\",\"state\":\"MH\",\"zipCode\":\"411001\",\"mobile\":\"9876543210\"}"))
+				.andReturn().getResponse().getContentAsString()).get("id").asLong();
+		when(paymentGateway.createPaymentLink(any()))
+				.thenReturn(new PaymentGateway.CreatedPaymentLink("plink_real_" + orderId, "https://rzp.io/real", null));
+		mvc.perform(post("/api/payments/" + orderId).header(HttpHeaders.AUTHORIZATION, bearer(token))).andExpect(status().isAccepted());
+		when(paymentGateway.fetchPayment("pay_real_" + orderId))
+				.thenReturn(new PaymentGateway.ProviderPayment("captured", "order_made_at_payment", 70000));
+		when(paymentGateway.fetchPaymentLink("plink_real_" + orderId)).thenReturn(new PaymentGateway.PaymentLinkState(
+				"plink_real_" + orderId, "https://rzp.io/real", "paid", "order_made_at_payment", java.util.List.of("pay_real_" + orderId)));
+
+		mvc.perform(get("/api/payments").param("payment_id", "pay_real_" + orderId).param("order_id", String.valueOf(orderId))
+						.header(HttpHeaders.AUTHORIZATION, bearer(token)))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value(true));
+		assertThat(orders.findById(orderId).orElseThrow().getOrderStatus()).isEqualTo(OrderStatus.PLACED);
+		awaitStatus(orderId, "SENT");
+	}
+
+	@Test
 	void anotherUserCannotConfirmSomeoneElsesOrder() throws Exception {
 		PendingOrder order = pendingOrderWithLink();
 		razorpayReportsCaptured(order);

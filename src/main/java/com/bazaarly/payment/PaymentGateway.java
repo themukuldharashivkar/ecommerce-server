@@ -8,9 +8,27 @@ import com.razorpay.RazorpayException;
  */
 public interface PaymentGateway {
 
-	/** A hosted payment link the shopper is redirected to. */
+	/**
+	 * A hosted payment link the shopper is redirected to. providerOrderId is usually null at creation:
+	 * Razorpay creates the underlying order only when the link is paid.
+	 */
 	record CreatedPaymentLink(String id, String shortUrl, String providerOrderId) {
 	}
+
+	/**
+	 * A payment link as Razorpay reports it now: status ("created", "paid", "expired", "cancelled", ...),
+	 * the order behind it once it has been paid, and the ids of the payments made through it.
+	 */
+	record PaymentLinkState(String id, String shortUrl, String status, String providerOrderId,
+			java.util.List<String> paymentIds) {
+
+		/** The shopper can still pay this link. */
+		public boolean isPayable() {
+			return "created".equals(status) || "partially_paid".equals(status);
+		}
+	}
+
+	PaymentLinkState fetchPaymentLink(String linkId) throws RazorpayException;
 
 	/** expireBy: when the link stops accepting payments (Unix seconds; Razorpay needs at least 15 minutes ahead). */
 	record PaymentLinkRequest(long amountInPaise, String customerName, String customerContact,
