@@ -250,7 +250,9 @@ public class OrderServiceImplementation implements OrderService {
 	@Override
 	@Transactional(rollbackFor = Exception.class)
 	public void deleteOrder(Long orderId) throws OrderException {
-		Order order =findOrderById(orderId);
+		// locked like cancel and expiry, so a concurrent one cannot give the same stock back too
+		Order order = orderRepository.findByIdForUpdate(orderId)
+				.orElseThrow(() -> new OrderNotFoundException("order not exist with id "+orderId));
 		// an order that still holds stock gives it back before it disappears
 		if (order.getOrderStatus() == OrderStatus.PENDING || order.getOrderStatus() == OrderStatus.PLACED
 				|| order.getOrderStatus() == OrderStatus.CONFIRMED) {

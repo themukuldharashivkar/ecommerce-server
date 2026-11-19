@@ -229,7 +229,7 @@ class OrderServiceTest {
 
 	@Test
 	void deleteOrderOfAnUnknownOrderFailsWithoutDeleting() {
-		when(orderRepository.findById(9L)).thenReturn(Optional.empty());
+		when(orderRepository.findByIdForUpdate(9L)).thenReturn(Optional.empty());
 
 		assertThatThrownBy(() -> service.deleteOrder(9L)).isInstanceOf(OrderException.class);
 		verify(orderRepository, never()).deleteById(any());

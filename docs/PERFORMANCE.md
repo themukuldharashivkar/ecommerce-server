@@ -5,6 +5,7 @@ Every number here comes from a real run. Each section states how it was measured
 1. [Database indexes](#1-database-indexes-flyway-v2__indexessql-measured-2026-11-17)
 2. [Redis cache for the catalog endpoints](#2-redis-cache-for-the-catalog-endpoints-upgrade-step-3-measured-2026-11-18)
 3. [Catalog filtering and paging in the database](#3-catalog-filtering-and-paging-in-the-database-upgrade-step-5-measured-2026-11-18)
+4. [Orders for one hot product](#4-orders-for-one-hot-product-revised-plan-step-3-measured-2026-11-19)
 
 ## 1. Database indexes (Flyway `V2__indexes.sql`), measured 2026-11-17
 
@@ -177,3 +178,61 @@ Now all filters, the sort, `LIMIT`/`OFFSET` and the total count run in PostgreSQ
 The filtered request gained the most. To apply the size filter, the old code loaded the sizes of every candidate product, one query per product. Now that check is an `EXISTS` subquery.
 
 On the real 499-product catalog the same requests return the same products in the same order as before the change. This was checked against responses captured before Step 3; the only differences were reviews and ratings added by test runs in between.
+
+## 4. Orders for one hot product (revised plan Step 3), measured 2026-11-19
+
+### What was measured
+
+`POST /api/orders/` when many shoppers order the same product at once. This exercises stock reservation (a conditional `UPDATE` on the size row and the product row, see [CONCURRENCY.md](CONCURRENCY.md)).
+
+- 500 different shoppers (each signed up, with 1 × size M of the product in their bag), **50 requests in flight**, **200 units in stock**, so 300 orders must be refused.
+- A warm-up run first (200 orders, 1,000 in stock), then 3 measured runs, each with a new product and new shoppers.
+- Latency is per request, measured by the client from send to full response.
+
+### Environment
+
+- App: the final Step 3 code, run as a jar (`prod` profile, `-Xmx1g`, OpenJDK 21.0.13), in-memory cache, mail off
+- Database: a fresh PostgreSQL 16 container (`postgres:16-alpine`, default settings), with Flyway V1–V7
+- Client: `scripts/benchmark/hot_product_load.mjs` (Node 26, `fetch`), on the same machine over loopback
+- Machine: Apple M5 MacBook, 16 GB RAM
+
+### Results
+
+| | Run 1 | Run 2 | Run 3 |
+|---|---|---|---|
+| Orders placed (200) | 200 | 200 | 200 |
+| Refused (409) | 300 | 300 | 300 |
+| Any other status | 0 | 0 | 0 |
+| Final stock, product / size M | 0 / 0 | 0 / 0 | 0 / 0 |
+| Placed: p50 / p95 / p99 | 156.5 / 204.9 / 222.7 ms | 146.3 / 192.0 / 235.0 ms | 128.8 / 171.2 / 223.5 ms |
+| Refused: p50 / p95 / p99 | 60.7 / 148.4 / 168.2 ms | 75.7 / 129.3 / 148.9 ms | 60.3 / 113.4 / 155.8 ms |
+| All requests: p50 / p95 | 80.3 / 185.0 ms | 84.1 / 174.8 ms | 70.4 / 159.7 ms |
+| Throughput | 474.6 req/s | 477.2 req/s | 544.5 req/s |
+
+- The database agreed: exactly 200 orders per product. The API log had no errors and no `deadlock detected`.
+- An earlier session with the same script, on the code just before the last lock-order change (that change only matters for orders with several sizes of one product), gave the same counts. Its latencies were lower (placed p50 114–126 ms, refused p50 42–44 ms, 644–666 req/s). That shows how much the numbers vary from run to run on this laptop.
+
+### Why refusals are faster
+
+A refused order stops at the first `UPDATE` that matches 0 rows, and the transaction rolls back. A placed order also writes the order, its items and the address. Every order for this product waits its turn on the same two rows (size M and the product), so latency grows with the number of requests in flight.
+
+### Limits
+
+- One laptop, loopback, a single hot product: this measures contention on one row, not general checkout throughput.
+- Placing an order doesn't call Razorpay (the payment link is created in a separate request), so no external latency is included.
+
+### Reproduce
+
+```bash
+# a throwaway database and the API (no Razorpay needed for placing orders)
+docker run -d --rm --name bazaarly-loadtest-db -e POSTGRES_DB=ecommerce -e POSTGRES_USER=bazaarly \
+  -e POSTGRES_PASSWORD=loadtest -p 55432:5432 postgres:16-alpine
+./mvnw -DskipTests package
+SPRING_PROFILES_ACTIVE=prod SERVER_PORT=5460 DB_PORT=55432 DB_PASSWORD=loadtest SEED_ENABLED=false \
+  CACHE_TYPE=simple MAIL_ENABLED=false RATE_LIMIT_SIGNUP_REQUESTS=1000000 RATE_LIMIT_SIGNIN_REQUESTS=1000000 \
+  JWT_SECRET=<32+ random characters> RAZORPAY_KEY_ID=x RAZORPAY_KEY_SECRET=x FRONTEND_URL=http://localhost:3000 \
+  ADMIN_EMAIL=admin@loadtest.local ADMIN_PASSWORD=admin-loadtest-123 java -Xmx1g -jar target/e-commerce-0.0.1-SNAPSHOT.jar &
+API=http://localhost:5460 node scripts/benchmark/hot_product_load.mjs
+docker rm -f bazaarly-loadtest-db
+```
+

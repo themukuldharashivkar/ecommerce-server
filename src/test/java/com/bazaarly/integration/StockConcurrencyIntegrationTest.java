@@ -108,6 +108,32 @@ class StockConcurrencyIntegrationTest extends IntegrationTest {
 		assertThat(sizeStock(b, "M")).isEqualTo(80);
 	}
 
+	@RepeatedTest(20)
+	void ordersForSeveralSizesOfOneProductDoNotDeadlock() throws Exception {
+		Product product = productWithStock(100, "M", "L");
+		List<String> tokens = buyers(30);
+		for (int i = 0; i < tokens.size(); i++) {
+			String token = tokens.get(i);
+			emptyCart(token);
+			// a third buy both sizes, a third only L, a third only M
+			if (i % 3 != 2) {
+				addToCart(token, product, "L", 1);
+			}
+			if (i % 3 != 1) {
+				addToCart(token, product, "M", 1);
+			}
+		}
+
+		List<Integer> statuses = concurrently(tokens.stream()
+				.<Callable<MockHttpServletResponse>>map(token -> () -> placeOrder(token)).toList())
+				.stream().map(r -> ((MockHttpServletResponse) r).getStatus()).toList();
+
+		assertThat(statuses).containsOnly(200);
+		assertThat(sizeStock(product, "M")).isEqualTo(80);
+		assertThat(sizeStock(product, "L")).isEqualTo(80);
+		assertThat(stock(product)).isEqualTo(200 - 40);
+	}
+
 	// ---------- 3d: releasing stock happens once ----------
 
 	@RepeatedTest(20)
@@ -204,9 +230,10 @@ class StockConcurrencyIntegrationTest extends IntegrationTest {
 		}
 	}
 
-	private Product productWithStock(int quantity, String size) throws Exception {
-		Product product = createProduct("stock_concurrency", 1000, 800, "Red", size);
-		jdbc.update("UPDATE product SET quantity = ? WHERE id = ?", quantity, product.getId());
+	/** Each size gets {@code quantity}; the product total is the sum of its sizes. */
+	private Product productWithStock(int quantity, String... sizes) throws Exception {
+		Product product = createProduct("stock_concurrency", 1000, 800, "Red", sizes);
+		jdbc.update("UPDATE product SET quantity = ? WHERE id = ?", quantity * sizes.length, product.getId());
 		jdbc.update("UPDATE product_sizes SET quantity = ? WHERE product_id = ?", quantity, product.getId());
 		return product;
 	}

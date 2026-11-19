@@ -8,6 +8,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 /**
  * Body of every error response: a human-readable message, the request it relates to ("uri=/api/..."),
  * when it happened and, for validation errors only, the message for each invalid field.
+ * An out-of-stock refusal (409) also names the product, the size and how many are left.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class ErrorDetails {
@@ -16,6 +17,9 @@ public class ErrorDetails {
 	private String details;
 	private LocalDateTime timestamp;
 	private Map<String, String> fieldErrors;
+	private Long productId;
+	private String size;
+	private Integer available;
 
 	public ErrorDetails() {
 	}
@@ -39,4 +43,10 @@ public class ErrorDetails {
 	public void setTimestamp(LocalDateTime timestamp) { this.timestamp = timestamp; }
 	public Map<String, String> getFieldErrors() { return fieldErrors; }
 	public void setFieldErrors(Map<String, String> fieldErrors) { this.fieldErrors = fieldErrors; }
+	public Long getProductId() { return productId; }
+	public void setProductId(Long productId) { this.productId = productId; }
+	public String getSize() { return size; }
+	public void setSize(String size) { this.size = size; }
+	public Integer getAvailable() { return available; }
+	public void setAvailable(Integer available) { this.available = available; }
 }

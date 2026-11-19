@@ -28,7 +28,7 @@ import jakarta.validation.ConstraintViolationException;
 
 /**
  * Turns every exception into the same JSON body ({@link ErrorDetails}) with a fitting status:
- * 400 invalid input, 401 bad credentials, 404 unknown resource or route, 405/415 wrong method or
+ * 400 invalid input, 401 bad credentials, 404 unknown resource or route, 409 out of stock, 405/415 wrong method or
  * content type, 500 anything unexpected. 500s never echo the exception message (it can contain
  * internals); the full error is logged instead.
  */
@@ -58,6 +58,17 @@ public class GlobleException {
 	@ExceptionHandler({ UserException.class, ProductException.class, CartItemException.class, OrderException.class })
 	public ResponseEntity<ErrorDetails> businessRule(Exception e, WebRequest req) {
 		return error(HttpStatus.BAD_REQUEST, e.getMessage(), req);
+	}
+
+	// ---------- 409: the order asks for more than is left ----------
+
+	@ExceptionHandler(OutOfStockException.class)
+	public ResponseEntity<ErrorDetails> outOfStock(OutOfStockException e, WebRequest req) {
+		ErrorDetails body = new ErrorDetails(e.getMessage(), req.getDescription(false), LocalDateTime.now());
+		body.setProductId(e.getProductId());
+		body.setSize(e.getSize());
+		body.setAvailable(e.getAvailable());
+		return new ResponseEntity<>(body, HttpStatus.CONFLICT);
 	}
 
 	@ExceptionHandler(MethodArgumentNotValidException.class)

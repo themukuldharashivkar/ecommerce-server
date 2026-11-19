@@ -44,6 +44,7 @@ The schema is owned by Flyway (`src/main/resources/db/migration`); Hibernate run
 | `V4__product_sizes_unique.sql` | Each product lists a size once (unique on product and lower-cased size name). |
 | `V5__payment_refunds.sql` | `razorpay_refund_id` on orders; payment status `REFUNDED`. |
 | `V6__admin_viewer_role.sql` | Role `ROLE_ADMIN_VIEWER` (read-only admin for the public demo). |
+| `V7__stock_constraints.sql` | `CHECK (quantity >= 0)` on `product` and `product_sizes` (negative values clamped to 0 first). |
 
 Enums (`UserRole`, `OrderStatus`, `PaymentMethod`, `PaymentStatus`) use `@Enumerated(EnumType.STRING)`, so reordering an enum can no longer corrupt stored data. Benchmarks are in [PERFORMANCE.md](PERFORMANCE.md).
 
@@ -248,10 +249,10 @@ Measured on 2026-11-18 (`./mvnw clean verify`, 19 s on an Apple M5):
 | | Count |
 |---|---|
 | Unit tests (JUnit 5 + Mockito) | 76 |
-| Integration tests (Spring Boot + Testcontainers PostgreSQL; caching tests also use a Redis container) | 117 |
-| **Total** | **193, all passing** |
+| Integration tests (Spring Boot + Testcontainers PostgreSQL; caching tests also use a Redis container), including 6 concurrency tests × 20 repetitions | 237 |
+| **Total** | **313, all passing** |
 
-JaCoCo line coverage (193 tests, 19 Nov 2026): service layer (`service` + `payment` packages) **84.9%** (519/611 lines); `service` alone 93.2%. `payment` is lower because `RazorpayPaymentGateway`, the thin wrapper around the Razorpay SDK, is deliberately not exercised. Whole codebase 80.0% of lines, 61.6% of branches.
+JaCoCo line coverage (313 tests, 19 Nov 2026): service layer (`service` + `payment` packages) **86.3%** (534/619 lines); `service` alone 94.7%. `payment` is lower because `RazorpayPaymentGateway`, the thin wrapper around the Razorpay SDK, is deliberately not exercised. Whole codebase 80.9% of lines, 63.8% of branches.
 
 To check that the tests catch real regressions, bugs were planted temporarily: removing the admin role rule failed 2 tests, marking uncaptured payments as paid failed 2 tests, removing the cache eviction on product update failed 1 test, running the confirmation job synchronously (no `@Async`) failed 1 test, removing the idempotency guards failed 2 tests (duplicate emails), removing the `quantity >= n` stock guard failed 2 tests (overselling), removing `Size` equality failed 12 tests, not clearing the cart on payment failed 1 test, and removing `@DynamicUpdate` failed 1 test (stale stock overwritten).
 
@@ -333,6 +334,16 @@ Refunds were tested with the Razorpay gateway mocked. A real test-mode refund ne
 
 - **Real payments would have been rejected.** The Step 4 check compared the payment's Razorpay order id with the one stored when the payment link was created, but Razorpay only creates that order when the link is paid, so the stored value was empty. The live data showed it (`order_id` null on every order). The tests had missed it because the mocked gateway always returned an order id at creation. Payments are now matched through the stored payment link; a regression test uses Razorpay's real behaviour and fails with the old check.
 
+### Fixed in revised Step 3 (stock under concurrency)
+
+Found by `StockConcurrencyIntegrationTest`, committed failing first; details in [CONCURRENCY.md](CONCURRENCY.md).
+
+- **Stale order under the row lock.** With open-in-view, `findByIdForUpdate` locked the row but returned the order already loaded in the request, with its old status. A cancel and an expiry at the same time gave stock back up to 3 times, and a payment racing the expiry could mark an expired order paid while its stock was released. Fixed: lock the row, then refresh the order from it.
+- **Unlocked delete.** Deleting an order while it expired gave the stock back twice. Delete now locks the order.
+- **Deadlocks.** Orders with the same products in a different order, or with two sizes of one product, deadlocked (500). Rows are now locked in one global order.
+- **Out-of-stock status.** Was 400 with only a message; now 409 with `productId`, `size` and `available`.
+- **Checkout showed no error.** The storefront read `data.message` instead of `data.error`, and the address step never displayed order errors, so a refused order failed silently. It now shows the message and reloads the bag.
+
 ### Known issues, not yet fixed
 
 | Issue | Planned in |
@@ -340,4 +351,5 @@ Refunds were tested with the Razorpay gateway mocked. A real test-mode refund ne
 | Old secrets (Razorpay test key and secret, DB password, JWT secret) are still in git history and on GitHub. They should be rotated. | Step 10 |
 | The live Railway deployment still runs the MySQL build; moving it to PostgreSQL means a new database (existing live users and orders are not migrated). | Step 8 |
 | Rate limits are per instance (in memory). With several instances each enforces its own limit. | if scaled out |
+| One account can hold stock with any number of unpaid orders (each reserves stock for 60 minutes). A cap on open unpaid orders per account would stop it. | open |
 | Admin "list all orders" and the user's order history return the first 50 by default; the frontend does not request further pages yet. | open |

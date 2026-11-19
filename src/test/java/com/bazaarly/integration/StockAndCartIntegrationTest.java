@@ -138,8 +138,11 @@ class StockAndCartIntegrationTest extends IntegrationTest {
 		addToCart(token, scarce, "L", 4);
 		jdbc.update("UPDATE product_sizes SET quantity = 1 WHERE product_id = ? AND name = 'L'", scarce.getId()); // sold elsewhere
 
-		placeOrder(token).andExpect(status().isBadRequest())
-				.andExpect(jsonPath("$.error").value("Only 1 left of " + scarce.getTitle() + " in size L"));
+		placeOrder(token).andExpect(status().isConflict())
+				.andExpect(jsonPath("$.error").value("Only 1 left of " + scarce.getTitle() + " in size L"))
+				.andExpect(jsonPath("$.productId").value(scarce.getId()))
+				.andExpect(jsonPath("$.size").value("L"))
+				.andExpect(jsonPath("$.available").value(1));
 
 		// all or nothing: the first item's stock was not taken either, and no order exists
 		assertThat(sizeStock(plenty, "M")).isEqualTo(5);
@@ -180,7 +183,7 @@ class StockAndCartIntegrationTest extends IntegrationTest {
 			pool.shutdownNow();
 		}
 
-		assertThat(statuses).containsOnly(200, 400);
+		assertThat(statuses).containsOnly(200, 409);
 		assertThat(statuses.stream().filter(s -> s == 200).count()).isEqualTo(1);
 		assertThat(stock(product)).isZero();
 		assertThat(sizeStock(product, "M")).isZero();

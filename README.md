@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/themukuldharashivkar/ecommerce-server/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/themukuldharashivkar/ecommerce-server/actions/workflows/ci.yml)
 
-Bazaarly is a full-stack clothing store. This repository is its REST API, built with Spring Boot 3 and Java 17, and the React storefront lives in [ecommerce-frontend](https://github.com/themukuldharashivkar/ecommerce-frontend). Shoppers browse and search a 499-product catalog, keep a cart and pay through Razorpay (test mode), and an admin panel manages products and orders. The API runs on PostgreSQL with Flyway migrations and caches the catalog in Redis. Placing an order reserves stock without overselling; payments are verified with Razorpay and never trusted from the browser. Order confirmations go through a transactional outbox and an async job. There are 193 automated tests, most against real PostgreSQL and Redis in Docker.
+Bazaarly is a full-stack clothing store. This repository is its REST API, built with Spring Boot 3 and Java 17, and the React storefront lives in [ecommerce-frontend](https://github.com/themukuldharashivkar/ecommerce-frontend). Shoppers browse and search a 499-product catalog, keep a cart and pay through Razorpay (test mode), and an admin panel manages products and orders. The API runs on PostgreSQL with Flyway migrations and caches the catalog in Redis. Placing an order reserves stock without overselling, which is proven by concurrency tests and a load test; payments are verified with Razorpay and never trusted from the browser. Order confirmations go through a transactional outbox and an async job. There are 313 automated tests, most against real PostgreSQL and Redis in Docker.
 
 ## Live demo
 
@@ -52,7 +52,7 @@ flowchart LR
 ```
 
 **An order, end to end:**
-1. `POST /api/orders/` creates the order and **reserves stock** in the same transaction. Each size is decremented by a conditional `UPDATE ... WHERE quantity >= n`, so two shoppers can't buy the last unit.
+1. `POST /api/orders/` creates the order and **reserves stock** in the same transaction. Each size is decremented by a conditional `UPDATE ... WHERE quantity >= n`, so two shoppers can't buy the last unit; the loser gets **409** with how many are left. Rows are locked in a fixed order, so concurrent orders can't deadlock ([docs/CONCURRENCY.md](docs/CONCURRENCY.md)).
 2. `POST /api/payments/{orderId}` creates a Razorpay payment link that expires with the reservation, or returns the order's existing link if it can still be paid.
 3. The shopper pays on Razorpay's page and is sent back to the storefront with a payment id.
 4. `GET /api/payments?payment_id=...&order_id=...` asks Razorpay for that payment. The order is marked paid only if the payment was captured, for the full amount, through this order's own link. The order row is locked first, so a repeat or concurrent confirmation does nothing. In the same transaction the cart lines are removed and a confirmation row is written to the outbox.
@@ -63,7 +63,7 @@ flowchart LR
 | Area | Used |
 |---|---|
 | Language and framework | Java 17, Spring Boot 3.0 (Web, Data JPA, Security, Validation, Cache, Actuator, Mail) |
-| Data | PostgreSQL 16, Hibernate 6, Flyway (6 migrations), `pg_trgm` trigram indexes for search |
+| Data | PostgreSQL 16, Hibernate 6, Flyway (7 migrations), `pg_trgm` trigram indexes for search |
 | Cache | Redis (Spring Cache; Upstash in production) |
 | Auth | Stateless JWT (jjwt), BCrypt, role-based access, Bucket4j rate limits on sign-in and sign-up |
 | Payments | Razorpay Java SDK: Payment Links, payment lookup, refunds |
@@ -77,6 +77,11 @@ flowchart LR
 **PostgreSQL with Flyway instead of `ddl-auto`.** The schema is defined by versioned SQL migrations (`src/main/resources/db/migration`), and Hibernate only checks it at startup (`ddl-auto=validate`). The tests build their database from the same migrations, so a migration that doesn't match the entities fails CI rather than production.
 - V2 adds the indexes: a composite `(category_id, discounted_price)` for the catalog, trigram GIN indexes for search, and every foreign key (PostgreSQL doesn't index foreign keys on its own).
 - Later migrations add the notification outbox, a unique size per product, refunds and the read-only admin role.
+
+**Stock under concurrency.** Stock is taken with one conditional `UPDATE` per row, which PostgreSQL re-checks on the current row even at the default `READ COMMITTED` level. `CHECK (quantity >= 0)` makes the database refuse negative stock. Rows are locked in one global order (products by id; a product's sizes before the product row), so orders never deadlock.
+- Releasing stock (cancel, expiry, delete) and confirming a payment all lock the order row and re-check its status, so stock comes back exactly once.
+- Concurrency tests found and fixed real bugs: Hibernate returning a stale order under the row lock (stock given back three times, an expired order marked paid), an unlocked delete, and two kinds of deadlock.
+- [docs/CONCURRENCY.md](docs/CONCURRENCY.md) covers the race, the fix, the alternatives (pessimistic and optimistic locking) and the measurements.
 
 **What the cache stores, and when it is cleared.** Only the public catalog is cached: product pages, catalog pages and search results. The value is the finished JSON response, not entities, so a hit is byte-for-byte identical to a miss and Hibernate's lazy collections never go into Redis.
 - Changing a product, review or rating clears the affected entries straight away. So does a stock change, but only after its transaction commits, so a rolled-back order can't leave stale stock in the cache.
@@ -111,6 +116,7 @@ All numbers come from real runs; [docs/PERFORMANCE.md](docs/PERFORMANCE.md) has 
 | Composite index for catalog filters | same | 9.5–22.0 ms → 3.5–13.0 ms (1.7–2.7×) |
 | Filtering and paging moved from Java into SQL | 100,299 products, HTTP p50 | 68.1 → 6.3 ms (no filters), 756.8 → 23.0 ms (colour + size + price + discount + stock) |
 | Redis cache for catalog pages | 499 products, HTTP, concurrency 10 | p95 20.4 → 0.8 ms, 639 → 16,424 req/s (cache hits) |
+| 500 shoppers ordering one product with 200 in stock | 50 in flight, 3 runs | exactly 200 placed and 300 refused (409), stock 0, no errors; placed p95 171–205 ms, 475–545 req/s |
 
 The benchmarks ran on a laptop over loopback, so read them as before/after comparisons, not production latencies. On the live deployment a warm catalog request takes about 250–265 ms (p50, measured from India), mostly TLS and Render's proxy.
 
@@ -123,14 +129,14 @@ The benchmarks ran on a laptop over loopback, so read them as before/after compa
 | Suite | Tests | What |
 |---|---|---|
 | Unit (JUnit 5 + Mockito), `src/test/java/com/bazaarly/unit` | 76 | services: cart, orders, stock, payment creation and confirmation, catalog filters, JWT, roles, admin bootstrap |
-| Integration (Spring Boot + Testcontainers), `src/test/java/com/bazaarly/integration` | 117 | the HTTP API end to end on PostgreSQL and Redis |
-| **Total** | **193** | 0 failures (`./mvnw verify`, 19 Nov 2026) |
+| Integration (Spring Boot + Testcontainers), `src/test/java/com/bazaarly/integration` | 237 | the HTTP API end to end on PostgreSQL and Redis, including 6 concurrency tests run 20 times each (120) |
+| **Total** | **313** | 0 failures (`./mvnw verify`, 19 Nov 2026) |
 
-JaCoCo line coverage: service layer (`service` and `payment` packages) **84.9%**, `service` alone 93.2%, whole codebase 80.0% (61.6% of branches). `payment` is lower on purpose: `RazorpayPaymentGateway`, the thin wrapper around the Razorpay SDK, is not called in tests.
+JaCoCo line coverage: service layer (`service` and `payment` packages) **86.3%**, `service` alone 94.7%, whole codebase 80.9% (63.8% of branches). `payment` is lower on purpose: `RazorpayPaymentGateway`, the thin wrapper around the Razorpay SDK, is not called in tests.
 
 - Integration tests run on **real PostgreSQL 16 and Redis** (Testcontainers), with the schema built by the real Flyway migrations, not H2.
 - Razorpay is never called: tests mock the `PaymentGateway` interface, and the mocks follow Razorpay's real behaviour. For example, a payment link has no order id until it is paid; that is how the live test payment found a bug.
-- They cover: authentication and JWT edge cases (expired, forged, malformed), role checks on every admin endpoint, the full cart → order → payment flow, concurrent orders for the last unit, refunds, cache hits and evictions, the async job under retries and concurrency, validation, rate limits and error responses.
+- They cover: authentication and JWT edge cases (expired, forged, malformed), role checks on every admin endpoint, the full cart → order → payment flow, concurrency (50 buyers for 10 units, opposite-order and multi-size orders without deadlocks, cancel/expire/delete releasing stock once, a payment racing the expiry), each repeated 20 times, refunds, cache hits and evictions, the async job under retries and concurrency, validation, rate limits and error responses.
 - To check that the tests catch real bugs, bugs were planted on purpose: removing the stock guard, the idempotency checks, the role rule or cache eviction each made at least one test fail ([list](docs/CURRENT_STATE.md#tests)).
 
 Coverage report: `target/site/jacoco/index.html` after `./mvnw verify`. One class: `./mvnw test -Dtest=CheckoutFlowIntegrationTest`.
@@ -190,7 +196,7 @@ The full, interactive reference is in Swagger UI (`/swagger-ui.html`). The main 
 | `GET /api/products/id/{id}` | anyone | product details |
 | `GET /api/cart/`, `PUT /api/cart/add` | shopper | view the cart, add an item |
 | `PUT`/`DELETE /api/cart_items/{id}` | shopper | change quantity, remove |
-| `POST /api/orders/` | shopper | place an order from the cart (reserves stock) |
+| `POST /api/orders/` | shopper | place an order from the cart (reserves stock; 409 if an item ran out) |
 | `GET /api/orders/user`, `GET /api/orders/{id}` | shopper | own orders |
 | `POST /api/payments/{orderId}` | shopper | get the Razorpay payment link |
 | `GET /api/payments?payment_id=&order_id=` | shopper | confirm a payment after Razorpay's redirect |
@@ -217,6 +223,7 @@ The full, interactive reference is in Swagger UI (`/swagger-ui.html`). The main 
 
 ## More docs
 
+- [docs/CONCURRENCY.md](docs/CONCURRENCY.md): stock under concurrency: the race, the fix, the bugs found, alternatives
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md): every measurement, with method and limits
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): Render, Upstash and Vercel setup, and the live verification
 - [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md): configuration, profiles, fixed and known issues

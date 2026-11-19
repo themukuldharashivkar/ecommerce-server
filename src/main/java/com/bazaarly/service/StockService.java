@@ -1,10 +1,13 @@
 package com.bazaarly.service;
 
-import java.util.LinkedHashSet;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,6 +22,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import com.bazaarly.cache.CacheNames;
 import com.bazaarly.exception.OrderException;
+import com.bazaarly.exception.OutOfStockException;
 import com.bazaarly.exception.ProductException;
 import com.bazaarly.modal.OrderItem;
 import com.bazaarly.modal.Product;
@@ -66,41 +70,64 @@ public class StockService {
 	/** Takes the items out of stock, or throws without changing anything (the transaction rolls back). */
 	@Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
 	public void reserve(List<OrderItem> items) throws OrderException {
-		Set<Long> touched = new LinkedHashSet<>();
-		for (OrderItem item : items) {
-			long productId = item.getProduct().getId();
-			int quantity = item.getQuantity();
+		for (Map.Entry<Long, List<OrderItem>> entry : inLockOrder(items).entrySet()) {
+			long productId = entry.getKey();
+			List<OrderItem> lines = entry.getValue();
 			if (hasSizes(productId)) {
-				int sizeRows = jdbc.update("""
-						UPDATE product_sizes SET quantity = quantity - ?
-						WHERE product_id = ? AND lower(name) = ? AND quantity >= ?""",
-						quantity, productId, lower(item.getSize()), quantity);
-				if (sizeRows != 1) {
-					throw new OrderException(shortage(item.getProduct().getTitle(), item.getSize(), sizeLeft(productId, item.getSize())));
+				for (OrderItem item : lines) {
+					int sizeRows = jdbc.update("""
+							UPDATE product_sizes SET quantity = quantity - ?
+							WHERE product_id = ? AND lower(name) = ? AND quantity >= ?""",
+							item.getQuantity(), productId, lower(item.getSize()), item.getQuantity());
+					if (sizeRows != 1) {
+						int left = sizeLeft(productId, item.getSize());
+						throw new OutOfStockException(shortage(item.getProduct().getTitle(), item.getSize(), left), productId,
+								item.getSize(), left);
+					}
 				}
 			}
+			int total = lines.stream().mapToInt(OrderItem::getQuantity).sum();
 			int productRows = jdbc.update("UPDATE product SET quantity = quantity - ? WHERE id = ? AND quantity >= ?",
-					quantity, productId, quantity);
+					total, productId, total);
 			if (productRows != 1) {
-				throw new OrderException(shortage(item.getProduct().getTitle(), item.getSize(), productLeft(productId)));
+				OrderItem first = lines.get(0);
+				String size = lines.size() == 1 ? first.getSize() : null;
+				int left = productLeft(productId);
+				throw new OutOfStockException(shortage(first.getProduct().getTitle(), size, left), productId, size, left);
 			}
-			touched.add(productId);
 		}
-		evictAfterCommit(touched);
+		evictAfterCommit(inLockOrder(items).keySet());
 	}
 
 	/** Puts the items back (order cancelled or expired). */
 	@Transactional(propagation = Propagation.MANDATORY)
 	public void release(List<OrderItem> items) {
-		Set<Long> touched = new LinkedHashSet<>();
-		for (OrderItem item : items) {
-			long productId = item.getProduct().getId();
-			jdbc.update("UPDATE product_sizes SET quantity = quantity + ? WHERE product_id = ? AND lower(name) = ?",
-					item.getQuantity(), productId, lower(item.getSize()));
-			jdbc.update("UPDATE product SET quantity = quantity + ? WHERE id = ?", item.getQuantity(), productId);
-			touched.add(productId);
+		for (Map.Entry<Long, List<OrderItem>> entry : inLockOrder(items).entrySet()) {
+			long productId = entry.getKey();
+			int total = 0;
+			for (OrderItem item : entry.getValue()) {
+				jdbc.update("UPDATE product_sizes SET quantity = quantity + ? WHERE product_id = ? AND lower(name) = ?",
+						item.getQuantity(), productId, lower(item.getSize()));
+				total += item.getQuantity();
+			}
+			jdbc.update("UPDATE product SET quantity = quantity + ? WHERE id = ?", total, productId);
 		}
-		evictAfterCommit(touched);
+		evictAfterCommit(inLockOrder(items).keySet());
+	}
+
+	/**
+	 * Each UPDATE locks the row it changes until the transaction ends. Two orders that take the same locks in
+	 * different orders can wait for each other forever (PostgreSQL then aborts one with "deadlock detected").
+	 * So every order locks in one global order: products by id, and for each product first its size rows
+	 * (by size), then the product row, once, for the product's total. Locking the product row between two of
+	 * its sizes would deadlock with an order for only the second size.
+	 */
+	private static Map<Long, List<OrderItem>> inLockOrder(List<OrderItem> items) {
+		Map<Long, List<OrderItem>> byProduct = new TreeMap<>();
+		items.stream()
+				.sorted(Comparator.comparing((OrderItem item) -> lower(item.getSize())))
+				.forEach(item -> byProduct.computeIfAbsent(item.getProduct().getId(), id -> new ArrayList<>()).add(item));
+		return byProduct;
 	}
 
 	private boolean hasSizes(long productId) {
