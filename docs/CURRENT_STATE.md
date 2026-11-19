@@ -251,7 +251,7 @@ Measured on 2026-11-18 (`./mvnw clean verify`, 19 s on an Apple M5):
 | Integration tests (Spring Boot + Testcontainers PostgreSQL; caching tests also use a Redis container) | 117 |
 | **Total** | **193, all passing** |
 
-JaCoCo line coverage: service layer (`service` + `payment` packages) **87.0%** (450/517 lines); `service` alone 92.4%. `payment` is lower because `RazorpayPaymentGateway`, the thin wrapper around the Razorpay SDK, is deliberately not exercised. Whole codebase 79.9% of lines, 60.3% of branches.
+JaCoCo line coverage (193 tests, 19 Nov 2026): service layer (`service` + `payment` packages) **84.9%** (519/611 lines); `service` alone 93.2%. `payment` is lower because `RazorpayPaymentGateway`, the thin wrapper around the Razorpay SDK, is deliberately not exercised. Whole codebase 80.0% of lines, 61.6% of branches.
 
 To check that the tests catch real regressions, bugs were planted temporarily: removing the admin role rule failed 2 tests, marking uncaptured payments as paid failed 2 tests, removing the cache eviction on product update failed 1 test, running the confirmation job synchronously (no `@Async`) failed 1 test, removing the idempotency guards failed 2 tests (duplicate emails), removing the `quantity >= n` stock guard failed 2 tests (overselling), removing `Size` equality failed 12 tests, not clearing the cart on payment failed 1 test, and removing `@DynamicUpdate` failed 1 test (stale stock overwritten).
 
