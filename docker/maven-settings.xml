@@ -1,0 +1,15 @@
+<!--
+  Maven settings for the Docker build only. Maven Central refuses shared build machines such as Render's
+  with HTTP 429 (too many requests). Render builds on Google Cloud, so dependencies come from Google's
+  official mirror of Maven Central instead. CI and local builds don't use this file.
+-->
+<settings>
+  <mirrors>
+    <mirror>
+      <id>google-maven-central</id>
+      <name>Google's mirror of Maven Central</name>
+      <url>https://maven-central.storage-download.googleapis.com/maven2/</url>
+      <mirrorOf>central</mirrorOf>
+    </mirror>
+  </mirrors>
+</settings>
