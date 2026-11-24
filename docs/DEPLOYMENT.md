@@ -7,7 +7,7 @@
 | Redis (cache) | Upstash, free plan | created by hand; host and password go into Render |
 | Storefront | Vercel (existing project) | `REACT_APP_API_URL` points at the Render API |
 
-Render deploys from the branch `upgrade/production-ready`. `main` (and the old Railway deployment that builds from it) stays untouched until the upgrade is merged.
+Render deploys from `main`. The upgrade was merged into `main` on 24 Nov 2026; the old Railway deployment had already been removed.
 
 ## Free-tier limits to know
 
