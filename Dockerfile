@@ -5,10 +5,16 @@
 FROM eclipse-temurin:17-jdk AS build
 WORKDIR /workspace
 
-# dependencies first, so they stay cached until pom.xml changes
+# dependencies first, so they stay cached until pom.xml changes.
+# Maven Central sometimes refuses shared build machines with HTTP 429 (too many requests): retry with a growing pause.
 COPY mvnw pom.xml ./
 COPY .mvn .mvn
-RUN chmod +x mvnw && ./mvnw -q -B dependency:go-offline
+RUN chmod +x mvnw \
+    && for attempt in 1 2 3 4 5; do \
+         ./mvnw -q -B dependency:go-offline && break; \
+         if [ "$attempt" = 5 ]; then exit 1; fi; \
+         echo "Downloading dependencies failed (attempt $attempt), retrying in $((attempt * 20)) s"; sleep $((attempt * 20)); \
+       done
 
 COPY src src
 RUN ./mvnw -q -B -DskipTests package \
